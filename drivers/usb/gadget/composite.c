@@ -20,6 +20,8 @@
 
 #include "u_os_desc.h"
 
+
+
 /**
  * struct usb_os_string - represents OS String to be reported by a gadget
  * @bLength: total length of the entire descritor, always 0x12
