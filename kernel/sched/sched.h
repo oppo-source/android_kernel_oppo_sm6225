@@ -152,6 +152,11 @@ extern cpumask_t asym_cap_sibling_cpus;
 #define TASK_ON_RQ_QUEUED	1
 #define TASK_ON_RQ_MIGRATING	2
 
+#ifdef CONFIG_MMAP_LOCK_OPT
+//#ifdef CONFIG_UXCHAIN_V2
+extern int sysctl_uxchain_v2;
+#endif
+
 extern __read_mostly int scheduler_running;
 
 extern unsigned long calc_load_update;
@@ -1125,6 +1130,9 @@ struct rq {
 	struct cpuidle_state	*idle_state;
 	int			idle_state_idx;
 #endif
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+	struct list_head ux_thread_list;
+#endif /* OPLUS_FEATURE_SCHED_ASSIST */
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -2152,9 +2160,14 @@ static inline unsigned long capacity_orig_of(int cpu)
 {
 	return cpu_rq(cpu)->cpu_capacity_orig;
 }
-
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+extern void sf_task_util_record(struct task_struct *p);
+#endif
 static inline unsigned long task_util(struct task_struct *p)
 {
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+	sf_task_util_record(p);
+#endif
 #ifdef CONFIG_SCHED_WALT
 	return p->ravg.demand_scaled;
 #endif
