@@ -21,6 +21,8 @@
 #include <linux/reset.h>
 #include <linux/debugfs.h>
 
+
+
 #define USB2_PHY_USB_PHY_UTMI_CTRL0		(0x3c)
 #define OPMODE_MASK				(0x3 << 3)
 #define OPMODE_NONDRIVING			(0x1 << 3)
