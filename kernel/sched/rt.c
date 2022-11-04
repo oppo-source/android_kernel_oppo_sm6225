@@ -1772,6 +1772,12 @@ static int rt_energy_aware_wake_cpu(struct task_struct *task)
 	int cpu_idle_idx = -1;
 	bool boost_on_big = rt_boost_on_big();
 
+#ifdef CONFIG_OPLUS_SF_BOOST
+	/* For surfaceflinger with util > 90, prefer to use big core */
+	if (task->compensate_need == 2 && tutil > 90)
+		boost_on_big = true;
+#endif
+
 	rcu_read_lock();
 
 	cpu = cpu_rq(smp_processor_id())->rd->min_cap_orig_cpu;
