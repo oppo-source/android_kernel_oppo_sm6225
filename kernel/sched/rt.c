@@ -13,6 +13,14 @@
 
 #include "walt.h"
 
+#ifdef CONFIG_OPLUS_FEATURE_GAME_OPT
+#include "../../drivers/soc/oplus/game_opt/game_ctrl.h"
+#endif
+
+#ifdef CONFIG_OPLUS_CPU_AUDIO_PERF
+#include "../sched_assist/sched_assist_audio.h"
+#endif
+
 int sched_rr_timeslice = RR_TIMESLICE;
 int sysctl_sched_rr_timeslice = (MSEC_PER_SEC / HZ) * RR_TIMESLICE;
 
@@ -1051,6 +1059,9 @@ static void update_curr_rt(struct rq *rq)
 
 	curr->se.exec_start = now;
 	cgroup_account_cputime(curr, delta_exec);
+#ifdef CONFIG_OPLUS_FEATURE_GAME_OPT
+	g_update_task_runtime(curr, delta_exec);
+#endif
 
 	if (!rt_bandwidth_enabled())
 		return;
@@ -1739,7 +1750,11 @@ static int pick_rt_task(struct rq *rq, struct task_struct *p, int cpu)
  * Return the highest pushable rq's task, which is suitable to be executed
  * on the CPU, NULL otherwise
  */
+#ifdef CONFIG_OPLUS_CPU_AUDIO_PERF
+struct task_struct *pick_highest_pushable_task(struct rq *rq, int cpu)
+#else
 static struct task_struct *pick_highest_pushable_task(struct rq *rq, int cpu)
+#endif
 {
 	struct plist_head *head = &rq->rt.pushable_tasks;
 	struct task_struct *p;
@@ -1754,6 +1769,9 @@ static struct task_struct *pick_highest_pushable_task(struct rq *rq, int cpu)
 
 	return NULL;
 }
+#ifdef CONFIG_OPLUS_CPU_AUDIO_PERF
+EXPORT_SYMBOL_GPL(pick_highest_pushable_task);
+#endif
 
 static DEFINE_PER_CPU(cpumask_var_t, local_cpu_mask);
 
@@ -1771,6 +1789,12 @@ static int rt_energy_aware_wake_cpu(struct task_struct *task)
 	int best_cpu_idle_idx = INT_MAX;
 	int cpu_idle_idx = -1;
 	bool boost_on_big = rt_boost_on_big();
+
+#ifdef CONFIG_OPLUS_SF_BOOST
+	/* For surfaceflinger with util > 90, prefer to use big core */
+	if (task->compensate_need == 2 && tutil > 90)
+		boost_on_big = true;
+#endif
 
 	rcu_read_lock();
 
@@ -1867,6 +1891,17 @@ static int find_lowest_rq(struct task_struct *task)
 	struct cpumask *lowest_mask = this_cpu_cpumask_var_ptr(local_cpu_mask);
 	int this_cpu = smp_processor_id();
 	int cpu = -1;
+#ifdef CONFIG_OPLUS_CPU_AUDIO_PERF
+	unsigned int drop_cpu;
+
+	/* skip the high idle latency cpu */
+	drop_cpu = cpumask_first(lowest_mask);
+	while (drop_cpu < nr_cpu_ids) {
+		if (oplus_sched_assist_audio_perf_check_exit_latency(task, drop_cpu))
+			cpumask_clear_cpu(drop_cpu, lowest_mask);
+		drop_cpu = cpumask_next(drop_cpu, lowest_mask);
+	}
+#endif
 
 	/* Make sure the mask is initialized first */
 	if (unlikely(!lowest_mask))

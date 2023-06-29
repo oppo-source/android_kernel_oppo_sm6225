@@ -6,6 +6,7 @@
  */
 
 #include <linux/mm.h>
+#include <linux/mm_inline.h>
 #include <linux/sched/mm.h>
 #include <linux/sched/task.h>
 #include <linux/hugetlb.h>
@@ -663,6 +664,7 @@ static void add_to_avail_list(struct swap_info_struct *p)
 static void swap_range_free(struct swap_info_struct *si, unsigned long offset,
 			    unsigned int nr_entries)
 {
+	unsigned long begin = offset;
 	unsigned long end = offset + nr_entries - 1;
 	void (*swap_slot_free_notify)(struct block_device *, unsigned long);
 
@@ -688,6 +690,7 @@ static void swap_range_free(struct swap_info_struct *si, unsigned long offset,
 			swap_slot_free_notify(si->bdev, offset);
 		offset++;
 	}
+	clear_shadow_from_swap_cache(si->type, begin, end);
 }
 
 static int scan_swap_map_slots(struct swap_info_struct *si,
@@ -1002,6 +1005,14 @@ start_over:
 		spin_unlock(&swap_avail_lock);
 start:
 		spin_lock(&si->lock);
+#if defined(CONFIG_NANDSWAP)
+		if ((current_is_nswapoutd() && !(si->flags & SWP_NANDSWAP)) ||
+			(!current_is_nswapoutd() && (si->flags & SWP_NANDSWAP))) {
+			spin_lock(&swap_avail_lock);
+			spin_unlock(&si->lock);
+			goto nextsi;
+		}
+#endif
 		if (!si->highest_bit || !(si->flags & SWP_WRITEOK)) {
 			spin_lock(&swap_avail_lock);
 			if (plist_node_empty(&si->avail_lists[node])) {
@@ -1830,7 +1841,8 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 	 * Move the page to the active list so it is not
 	 * immediately swapped out again after swapon.
 	 */
-	activate_page(page);
+	if (!lru_gen_enabled())
+		activate_page(page);
 out:
 	pte_unmap_unlock(pte, ptl);
 out_nolock:
@@ -1979,7 +1991,8 @@ static int unuse_mm(struct mm_struct *mm,
 		 * Activate page so shrink_inactive_list is unlikely to unmap
 		 * its ptes while lock is dropped, so swapoff can make progress.
 		 */
-		activate_page(page);
+		if (!lru_gen_enabled())
+			activate_page(page);
 		unlock_page(page);
 		down_read(&mm->mmap_sem);
 		lock_page(page);
@@ -3318,6 +3331,11 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 		setup_swap_ratio(p, prio);
 	}
 	enable_swap_info(p, prio, swap_map, cluster_info, frontswap_map);
+
+#if defined(CONFIG_NANDSWAP)
+	if (p->prio == SWAP_NANDSWAP_PRIO)
+		p->flags |= SWP_NANDSWAP;
+#endif
 
 	pr_info("Adding %uk swap on %s.  Priority:%d extents:%d across:%lluk %s%s%s%s%s\n",
 		p->pages<<(PAGE_SHIFT-10), name->name, p->prio,
