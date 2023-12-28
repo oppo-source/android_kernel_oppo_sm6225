@@ -39,7 +39,7 @@
 #include <linux/delayacct.h>
 #include <linux/psi.h>
 #include "internal.h"
-
+#include <linux/sysctl.h>
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
 
@@ -49,7 +49,9 @@
 #include <linux/buffer_head.h> /* for try_to_free_buffers */
 
 #include <asm/mman.h>
-
+#ifdef CONFIG_OPLUS_DYNAMIC_READAHEAD
+#include "dynamic_readhead.h"
+#endif /* CONFIG_OPLUS_DYNAMIC_READAHEAD */
 int want_old_faultaround_pte = 1;
 
 /*
@@ -2545,6 +2547,9 @@ static int lock_page_maybe_drop_mmap(struct vm_fault *vmf, struct page *page,
 }
 
 
+#ifdef CONFIG_OPLUS_DYNAMIC_READAHEAD
+extern int dynamic_readahead_enable;
+#endif
 /*
  * Synchronous readahead happens when we don't even find a page in the page
  * cache at all.  We don't want to perform IO under the mmap sem, so if we have
@@ -2588,9 +2593,20 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 	 * mmap read-around
 	 */
 	fpin = maybe_unlock_mmap_for_io(vmf, fpin);
+#ifdef CONFIG_OPLUS_DYNAMIC_READAHEAD
+	if(dynamic_readahead_enable) {
+		adjust_readaround(ra, offset);
+	}
+	else{
+		ra->start = max_t(long, 0, offset - ra->ra_pages / 2);
+		ra->size = ra->ra_pages;
+		ra->async_size = ra->ra_pages / 4;
+	}
+#else /* CONFIG_OPLUS_DYNAMIC_READAHEAD */
 	ra->start = max_t(long, 0, offset - ra->ra_pages / 2);
 	ra->size = ra->ra_pages;
 	ra->async_size = ra->ra_pages / 4;
+#endif
 	ra_submit(ra, mapping, file);
 	return fpin;
 }
