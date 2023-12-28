@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2002,2007-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #include <linux/delay.h>
 #include <linux/input.h>
@@ -1515,7 +1516,7 @@ static int adreno_probe(struct platform_device *pdev)
 
 	if (adreno_is_a6xx(adreno_dev))
 		device->mmu.features |= KGSL_MMU_SMMU_APERTURE;
-
+#if 0
 	if (ADRENO_FEATURE(adreno_dev, ADRENO_USE_SHMEM))
 		device->flags |= KGSL_FLAG_USE_SHMEM;
 
@@ -1523,7 +1524,7 @@ static int adreno_probe(struct platform_device *pdev)
 		device->flags |= KGSL_FLAG_USE_SHMEM;
 		device->flags |= KGSL_FLAG_PROCESS_RECLAIM;
 	}
-
+#endif
 	device->pwrctrl.bus_width = adreno_dev->gpucore->bus_width;
 
 	status = kgsl_device_platform_probe(device);
@@ -1577,6 +1578,8 @@ static int adreno_probe(struct platform_device *pdev)
 
 	adreno_debugfs_init(adreno_dev);
 	adreno_profile_init(adreno_dev);
+
+	adreno_dev->perfcounter = false;
 
 	adreno_sysfs_init(adreno_dev);
 

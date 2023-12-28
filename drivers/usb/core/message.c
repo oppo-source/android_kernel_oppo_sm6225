@@ -567,7 +567,7 @@ void usb_sg_wait(struct usb_sg_request *io)
 	 * solve neither problem than to solve both!
 	 */
 	retval = wait_for_completion_timeout(&io->complete,
-						msecs_to_jiffies(5000));
+						msecs_to_jiffies(8000));
 	if (retval == 0) {
 		dev_err(&io->dev->dev, "%s, timed out while waiting for io_complete\n",
 				__func__);
