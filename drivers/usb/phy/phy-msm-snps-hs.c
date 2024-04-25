@@ -29,6 +29,13 @@
 #define OPMODE_NONDRIVING			(0x1 << 3)
 #define SLEEPM					BIT(0)
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define OPMODE_NORMAL				(0x00)
+#define TERMSEL					BIT(5)
+#define USB2_PHY_USB_PHY_UTMI_CTRL1		(0x40)
+#define XCVRSEL					BIT(0)
+#endif
+
 #define USB2_PHY_USB_PHY_UTMI_CTRL5		(0x50)
 #define POR					BIT(1)
 
@@ -112,7 +119,10 @@ struct msm_hsphy {
 
 	int			*param_override_seq;
 	int			param_override_seq_cnt;
-
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	int			*param_override_host_seq;
+	int			param_override_host_seq_cnt;
+#endif
 	void __iomem		*phy_rcal_reg;
 	u32			rcal_mask;
 
@@ -413,12 +423,20 @@ static int msm_hsphy_init(struct usb_phy *uphy)
 
 	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_HS_PHY_CTRL1,
 				VBUSVLDEXT0, VBUSVLDEXT0);
-
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	if ((phy->phy.flags & PHY_HOST_MODE) && phy->param_override_host_seq) {
+		hsusb_phy_write_seq(phy->base, phy->param_override_host_seq,
+				phy->param_override_host_seq_cnt, 0);
+	} else if (phy->param_override_seq) {
+		hsusb_phy_write_seq(phy->base, phy->param_override_seq,
+				phy->param_override_seq_cnt, 0);
+	}
 	/* set parameter ovrride  if needed */
+#else
 	if (phy->param_override_seq)
 		hsusb_phy_write_seq(phy->base, phy->param_override_seq,
 				phy->param_override_seq_cnt, 0);
-
+#endif
 	if (phy->pre_emphasis) {
 		u8 val = TXPREEMPAMPTUNE0(phy->pre_emphasis) &
 				TXPREEMPAMPTUNE0_MASK;
@@ -460,7 +478,7 @@ static int msm_hsphy_init(struct usb_phy *uphy)
 			PARAM_OVRD_MASK, phy->param_ovrd3);
 	}
 
-	dev_dbg(uphy->dev, "x0:%08x x1:%08x x2:%08x x3:%08x\n",
+	dev_err(uphy->dev, "x0:%08x x1:%08x x2:%08x x3:%08x\n",
 	readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X0),
 	readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X1),
 	readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X2),
@@ -513,7 +531,15 @@ static int msm_hsphy_set_suspend(struct usb_phy *uphy, int suspend)
 
 suspend:
 	if (suspend) { /* Bus suspend */
-		if (phy->cable_connected) {
+		 /*
+		 * The HUB class drivers calls usb_phy_notify_disconnect() upon a device
+		 * disconnect. Consider a scenario where a USB device is disconnected without
+		 * detaching the OTG cable. phy->cable_connected is marked false due to above
+		 * mentioned call path. Now, while entering low power mode (host bus suspend),
+		 * we come here and turn off regulators thinking no cable is connected. Prevent
+		 * this by not turning off regulators while in host mode.
+		*/
+		if (phy->cable_connected || (phy->phy.flags & PHY_HOST_MODE)) {
 			/* Enable auto-resume functionality during host mode
 			 * bus suspend with some FS/HS peripheral connected.
 			 */
@@ -623,6 +649,66 @@ static int msm_hsphy_set_power(struct usb_phy *uphy, unsigned int mA)
 
 	return 0;
 }
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define DP_PULSE_WIDTH_MSEC 200
+static enum usb_charger_type usb_phy_drive_dp_pulse(struct usb_phy *uphy)
+{
+	struct msm_hsphy *phy = container_of(uphy, struct msm_hsphy, phy);
+	int ret;
+
+	ret = msm_hsphy_enable_power(phy, true);
+	if (ret < 0) {
+		dev_dbg(phy->phy.dev,
+			"dpdm regulator enable failed:%d\n", ret);
+		return 0;
+	}
+	msm_hsphy_enable_clocks(phy, true);
+	/* set utmi_phy_cmn_cntrl_override_en &
+	 * utmi_phy_datapath_ctrl_override_en
+	 */
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_CFG0,
+				UTMI_PHY_CMN_CTRL_OVERRIDE_EN,
+				UTMI_PHY_CMN_CTRL_OVERRIDE_EN);
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_CFG0,
+				UTMI_PHY_DATAPATH_CTRL_OVERRIDE_EN,
+				UTMI_PHY_DATAPATH_CTRL_OVERRIDE_EN);
+	/* set opmode to normal i.e. 0x0 & termsel to fs */
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_UTMI_CTRL0,
+				OPMODE_MASK, OPMODE_NORMAL);
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_UTMI_CTRL0,
+				TERMSEL, TERMSEL);
+	/* set xcvrsel to fs */
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_UTMI_CTRL1,
+					XCVRSEL, XCVRSEL);
+
+	msleep(DP_PULSE_WIDTH_MSEC);
+
+	/* clear termsel to fs */
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_UTMI_CTRL0,
+				TERMSEL, 0x00);
+	/* clear xcvrsel */
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_UTMI_CTRL1,
+					XCVRSEL, 0x00);
+	/* clear utmi_phy_cmn_cntrl_override_en &
+	 * utmi_phy_datapath_ctrl_override_en
+	 */
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_CFG0,
+				UTMI_PHY_CMN_CTRL_OVERRIDE_EN, 0x00);
+	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_CFG0,
+				UTMI_PHY_DATAPATH_CTRL_OVERRIDE_EN, 0x00);
+
+	msleep(20);
+	msm_hsphy_enable_clocks(phy, false);
+	ret = msm_hsphy_enable_power(phy, false);
+	if (ret < 0) {
+		dev_dbg(phy->phy.dev,
+			"dpdm regulator disable failed:%d\n", ret);
+	}
+
+	return 0;
+}
+#endif
 
 static int msm_hsphy_dpdm_regulator_enable(struct regulator_dev *rdev)
 {
@@ -870,7 +956,36 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 			return ret;
 		}
 	}
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	phy->param_override_host_seq_cnt = of_property_count_elems_of_size(
+					dev->of_node,
+					"qcom,param-override-seq-host",
+					sizeof(*phy->param_override_host_seq));
 
+	if (phy->param_override_host_seq_cnt > 0) {
+		phy->param_override_host_seq = devm_kcalloc(dev,
+					phy->param_override_host_seq_cnt,
+					sizeof(*phy->param_override_host_seq),
+					GFP_KERNEL);
+		if (!phy->param_override_host_seq)
+			return -ENOMEM;
+
+		if (phy->param_override_host_seq_cnt % 2) {
+			dev_err(dev, "param_override_seq_host_cnt\n");
+			return -EINVAL;
+		}
+
+		ret = of_property_read_u32_array(dev->of_node,
+				"qcom,param-override-seq-host",
+				phy->param_override_host_seq,
+				phy->param_override_host_seq_cnt);
+		if (ret) {
+			dev_err(dev, "qcom,param-override-host-seq read failed %d\n",
+				ret);
+			return ret;
+		}
+	}
+#endif
 	ret = of_property_read_u32_array(dev->of_node, "qcom,vdd-voltage-level",
 					 (u32 *) phy->vdd_levels,
 					 ARRAY_SIZE(phy->vdd_levels));
@@ -910,6 +1025,9 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 	phy->phy.notify_disconnect	= msm_hsphy_notify_disconnect;
 	phy->phy.set_power		= msm_hsphy_set_power;
 	phy->phy.type			= USB_PHY_TYPE_USB2;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	phy->phy.charger_detect		= usb_phy_drive_dp_pulse;
+#endif
 
 	ret = usb_add_phy_dev(&phy->phy);
 	if (ret)

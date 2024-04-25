@@ -91,6 +91,10 @@ config CC_HAS_ASM_INLINE
 config CC_HAS_NO_PROFILE_FN_ATTR
 	def_bool $(success,echo '__attribute__((no_profile_instrument_function)) int x();' | $(CC) -x c - -c -o /dev/null -Werror)
 
+config PAHOLE_VERSION
+	int
+	default $(shell,$(srctree)/scripts/pahole-version.sh $(PAHOLE))
+
 config CONSTRUCTORS
 	bool
 
@@ -878,6 +882,13 @@ config UCLAMP_BUCKETS_COUNT
 
 	  If in doubt, use the default value.
 
+#ifdef OPLUS_FEATURE_PERFORMANCE_SCHED
+source "kernel/oplus_cpu/sched/Kconfig"
+#endif /* OPLUS_FEATURE_PERFORMANCE_SCHED */
+
+#ifdef OPLUS_FEATURE_THERMAL_HORAE
+source "kernel/oplus_cpu/thermal/Kconfig"
+#endif /* OPLUS_FEATURE_THERMAL_HORAE */
 endmenu
 
 #

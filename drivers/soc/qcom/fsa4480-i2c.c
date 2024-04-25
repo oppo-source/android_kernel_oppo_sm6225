@@ -31,6 +31,15 @@
 #define FSA4480_DELAY_L_AGND    0x10
 #define FSA4480_RESET           0x1E
 
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add DIO4480 support */
+enum switch_vendor {
+    FSA4480 = 0,
+    HL5280,
+    DIO4480
+};
+#endif /* OPLUS_ARCH_EXTENDS */
+
 struct fsa4480_priv {
 	struct regmap *regmap;
 	struct device *dev;
@@ -41,6 +50,14 @@ struct fsa4480_priv {
 	struct work_struct usbc_analog_work;
 	struct blocking_notifier_head fsa4480_notifier;
 	struct mutex notification_lock;
+ 	#ifdef OPLUS_ARCH_EXTENDS
+	/* Add for fsa4480 headset detection interrupt */
+	unsigned int hs_det_pin;
+	/* Add DIO4480 support */
+	enum switch_vendor vendor;
+	/* Add for 3rd usb protocal support */
+	unsigned int usb_protocal;
+	#endif
 	u32 use_powersupply;
 };
 
@@ -68,6 +85,26 @@ static const struct fsa4480_reg_val fsa_reg_i2c_defaults[] = {
 	{FSA4480_SWITCH_SETTINGS, 0x98},
 };
 
+#ifdef OPLUS_ARCH_EXTENDS
+	/* Add DIO4480 support */
+	int fsa4480_get_chip_vendor(struct device_node *node)
+{
+	struct i2c_client *client = of_find_i2c_device_by_node(node);
+	struct fsa4480_priv *fsa_priv;
+
+	if (!client)
+		return -EINVAL;
+
+	fsa_priv = (struct fsa4480_priv *)i2c_get_clientdata(client);
+	if (!fsa_priv)
+		return -EINVAL;
+
+
+	return fsa_priv->vendor;
+}
+
+EXPORT_SYMBOL(fsa4480_get_chip_vendor);
+#endif /* OPLUS_ARCH_EXTENDS */
 static void fsa4480_usbc_update_settings(struct fsa4480_priv *fsa_priv,
 		u32 switch_control, u32 switch_enable)
 {
@@ -166,6 +203,45 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb_ptr,
 	else
 		return fsa4480_usbc_event_changed_ucsi(fsa_priv, evt, ptr);
 }
+
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add for dynamic check cross */
+int fsa4480_check_cross_conn(struct device_node *node)
+{
+	int ret = 0;
+	struct i2c_client *client = of_find_i2c_device_by_node(node);
+	struct fsa4480_priv *fsa_priv;
+
+	if (!client) {
+		pr_err("%s: fsa4480 client is NULL\n", __func__);
+		return 0;
+	}
+
+	fsa_priv = (struct fsa4480_priv *)i2c_get_clientdata(client);
+	if (!fsa_priv) {
+		pr_err("%s: fsa_priv is NULL\n", __func__);
+		return 0;
+	}
+
+	dev_dbg(fsa_priv->dev, "%s: registered vendor for %d\n",
+		__func__, fsa_priv->vendor);
+
+	switch (fsa_priv->vendor) {
+	case FSA4480:
+	case HL5280:
+		ret = 0;
+		break;
+	case DIO4480:
+		ret = 1;
+		break;
+	default:
+		break;
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL(fsa4480_check_cross_conn);
+#endif /* OPLUS_ARCH_EXTENDS */
 
 static int fsa4480_usbc_analog_setup_switches_psupply(
 						struct fsa4480_priv *fsa_priv)

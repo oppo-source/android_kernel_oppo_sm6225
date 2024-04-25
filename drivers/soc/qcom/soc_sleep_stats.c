@@ -99,6 +99,19 @@ struct appended_stats {
 	u32 reserved[3];
 };
 
+#ifdef CONFIG_OPLUS_POWERINFO_RPMH
+struct soc_sleep_stats_data {
+	struct device_node *node;
+	const struct stats_config *config;
+	struct kobject *stat_kobj;
+	struct kobject *master_kobj;
+	struct kobj_attribute ka_stat_oplus;
+	struct kobj_attribute ka_master_oplus;
+	void __iomem *reg;
+};
+static struct soc_sleep_stats_data *drv_backup;
+#endif
+
 #if IS_ENABLED(CONFIG_MSM_QMP)
 struct ddr_stats_g_data {
 	bool read_vote_info;
@@ -522,6 +535,96 @@ exit:
 }
 #endif
 
+#ifdef CONFIG_OPLUS_POWERINFO_RPMH
+#define MSM_ARCH_TIMER_FREQ 19200000
+static inline u64 get_time_in_msec(u64 counter)
+{
+	do_div(counter, (MSM_ARCH_TIMER_FREQ/MSEC_PER_SEC));
+
+	return counter;
+}
+
+static inline ssize_t oplus_append_data_to_buf(int index, char *buf, int length,
+					 struct sleep_stats *stat)
+{
+	if (index == 0) {
+		//vddlow: aosd: AOSS deep sleep
+		return scnprintf(buf, length,
+			"vlow:%x:%llx\n",
+			stat->count, stat->accumulated);
+	} else if (index == 1) {
+	  //vddmin: cxsd: cx collapse
+		return scnprintf(buf, length,
+			"vmin:%x:%llx\r\n",
+			stat->count, stat->accumulated);
+	} else {
+		return 0;
+	}
+}
+
+static ssize_t oplus_rpmh_stats_show(struct kobject *obj, struct kobj_attribute *attr,
+			  char *buf)
+{
+	int i;
+	ssize_t length = 0, op_length;
+	struct soc_sleep_stats_data *drv = container_of(attr,
+					   struct soc_sleep_stats_data, ka_stat_oplus);
+	void __iomem *reg = drv->reg;
+	struct sleep_stats stat;
+	struct appended_stats app_stat;
+
+	for (i = 0; i < drv->config->num_records; i++) {
+		stat.stat_type = le32_to_cpu(readl_relaxed(reg + STAT_TYPE_ADDR));
+		stat.count = le32_to_cpu(readl_relaxed(reg + COUNT_ADDR));
+		stat.last_entered_at = le64_to_cpu(readq(reg + LAST_ENTERED_AT_ADDR));
+		stat.last_exited_at = le64_to_cpu(readq(reg + LAST_EXITED_AT_ADDR));
+		stat.accumulated = le64_to_cpu(readq(reg + ACCUMULATED_ADDR));
+
+		stat.last_entered_at = get_time_in_msec(stat.last_entered_at);
+		stat.last_exited_at = get_time_in_msec(stat.last_exited_at);
+		stat.accumulated = get_time_in_msec(stat.accumulated);
+
+		reg += sizeof(struct sleep_stats);
+
+		if (drv->config->appended_stats_avail) {
+			app_stat.client_votes = le32_to_cpu(readl_relaxed(reg +
+								     CLIENT_VOTES_ADDR));
+
+			reg += sizeof(struct appended_stats);
+		} else {
+			app_stat.client_votes = 0;
+		}
+
+		op_length = oplus_append_data_to_buf(i, buf + length, PAGE_SIZE - length,
+					       &stat);
+		if (op_length >= PAGE_SIZE - length)
+			goto exit;
+
+		length += op_length;
+	}
+exit:
+	return length;
+}
+
+static int soc_sleep_stats_create_sysfs(struct platform_device *pdev,
+					struct soc_sleep_stats_data *drv)
+{
+	int ret = 0;
+
+	drv->stat_kobj = kobject_create_and_add("soc_sleep", NULL);
+	if (!drv->stat_kobj)
+		return -ENOMEM;
+
+	sysfs_attr_init(&drv->ka_stat_oplus.attr);
+	drv->ka_stat_oplus.attr.mode = 0444;
+	drv->ka_stat_oplus.attr.name = "oplus_rpmh_stats";
+	drv->ka_stat_oplus.show = oplus_rpmh_stats_show;
+
+	ret = sysfs_create_file(drv->stat_kobj, &drv->ka_stat_oplus.attr);
+	return ret;
+}
+#endif
+
 static int soc_sleep_stats_probe(struct platform_device *pdev)
 {
 	struct resource *res;
@@ -541,9 +644,21 @@ static int soc_sleep_stats_probe(struct platform_device *pdev)
 #endif
 	u32 offset;
 
+#ifdef CONFIG_OPLUS_POWERINFO_RPMH
+	struct soc_sleep_stats_data *drv;
+
+	drv = devm_kzalloc(&pdev->dev, sizeof(*drv), GFP_KERNEL);
+	if (!drv)
+		return -ENOMEM;
+#endif
+
 	config = device_get_match_data(&pdev->dev);
 	if (!config)
 		return -ENODEV;
+
+#ifdef CONFIG_OPLUS_POWERINFO_RPMH
+	drv->config = config;
+#endif
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
@@ -560,6 +675,11 @@ static int soc_sleep_stats_probe(struct platform_device *pdev)
 	reg_base = devm_ioremap(&pdev->dev, stats_base, stats_size);
 	if (!reg_base)
 		return -ENOMEM;
+
+#ifdef CONFIG_OPLUS_POWERINFO_RPMH
+	drv->reg = reg_base;
+	drv->node = pdev->dev.of_node;
+#endif
 
 	prv_data = devm_kzalloc(&pdev->dev, config->num_records *
 				sizeof(struct stats_prv_data), GFP_KERNEL);
@@ -643,6 +763,10 @@ skip_ddr_stats:
 	root = create_debugfs_entries(reg_base, ddr_reg, prv_data,
 				      pdev->dev.of_node);
 	platform_set_drvdata(pdev, root);
+#endif
+#ifdef CONFIG_OPLUS_POWERINFO_RPMH
+	soc_sleep_stats_create_sysfs(pdev, drv);
+	drv_backup = drv;
 #endif
 
 #ifdef CONFIG_MSM_BOOT_TIME_MARKER

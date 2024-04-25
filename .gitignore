@@ -168,3 +168,5 @@ arch/*/boot/dts/vendor
 
 # Documentation toolchain
 sphinx_*/
+drivers/soc/oplus
+include/soc/oplus
