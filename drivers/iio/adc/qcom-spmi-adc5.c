@@ -895,10 +895,17 @@ static const struct adc5_channels adc5_chans_pmic[ADC5_MAX_CHANNEL] = {
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
 	[ADC5_GPIO2_100K_PU]	= ADC5_CHAN_TEMP("gpio2_100k_pu", 0,
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
+#ifdef OPLUS_CHG_SEPARATE_MUSE_ADC
+	[ADC5_GPIO3_100K_PU]	= ADC5_CHAN_VOLT("gpio3_100k_pu", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_GPIO4_100K_PU]	= ADC5_CHAN_VOLT("gpio4_100k_pu", 1,
+					SCALE_HW_CALIB_DEFAULT)
+#else
 	[ADC5_GPIO3_100K_PU]	= ADC5_CHAN_TEMP("gpio3_100k_pu", 0,
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
 	[ADC5_GPIO4_100K_PU]	= ADC5_CHAN_TEMP("gpio4_100k_pu", 0,
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
+#endif
 };
 
 static const struct adc5_channels adc7_chans_pmic[ADC5_MAX_CHANNEL] = {

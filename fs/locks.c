@@ -1610,7 +1610,7 @@ free_lock:
 	locks_free_lock(new_fl);
 	return error;
 }
-EXPORT_SYMBOL(__break_lease);
+EXPORT_SYMBOL_NS(__break_lease, ANDROID_GKI_VFS_EXPORT_ONLY);
 
 /**
  *	lease_get_mtime - update modified time of an inode with exclusive lease
@@ -1901,9 +1901,10 @@ int generic_setlease(struct file *filp, long arg, struct file_lock **flp,
 			void **priv)
 {
 	struct inode *inode = locks_inode(filp);
+	kuid_t uid = i_uid_into_mnt(file_mnt_user_ns(filp), inode);
 	int error;
 
-	if ((!uid_eq(current_fsuid(), inode->i_uid)) && !capable(CAP_LEASE))
+	if ((!uid_eq(current_fsuid(), uid)) && !capable(CAP_LEASE))
 		return -EACCES;
 	if (!S_ISREG(inode->i_mode))
 		return -EINVAL;
