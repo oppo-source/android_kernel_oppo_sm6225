@@ -155,6 +155,7 @@ extern struct walt_sched_cluster *sched_cluster[WALT_NR_CPUS];
 
 /*END SCHED.H PORT*/
 
+extern u64 walt_sched_clock(void);
 extern int num_sched_clusters;
 extern int nr_big_cpus;
 extern unsigned int sched_capacity_margin_up[WALT_NR_CPUS];
@@ -249,6 +250,10 @@ extern unsigned int sysctl_panic_on_walt_bug;
 extern int sched_dynamic_tp_handler(struct ctl_table *table, int write,
 			void __user *buffer, size_t *lenp, loff_t *ppos);
 
+#ifdef CONFIG_OPLUS_FEATURE_SUGOV_TL
+extern unsigned int get_targetload(struct cpufreq_policy *policy);
+#endif /* CONFIG_OPLUS_FEATURE_SUGOV_TL */
+
 extern struct list_head cluster_head;
 #define for_each_sched_cluster(cluster) \
 	list_for_each_entry_rcu(cluster, &cluster_head, list)
@@ -324,6 +329,9 @@ extern unsigned int sched_lib_mask_force;
 #define WALT_CPUFREQ_PL			0x8
 #define WALT_CPUFREQ_EARLY_DET		0x10
 #define WALT_CPUFREQ_BOOST_UPDATE	0x20
+#if IS_ENABLED(CONFIG_OPLUS_CPUFREQ_IOWAIT_PROTECT)
+#define WALT_CPUFREQ_IOWAIT		(1U << 10)
+#endif
 
 #define CPUFREQ_REASON_LOAD		0
 #define CPUFREQ_REASON_BTR		0x1
@@ -1208,5 +1216,28 @@ static inline bool is_walt_sentinel(void)
 		}								\
 	}									\
 })
+static inline void walt_lockdep_assert(int cond, int cpu, struct task_struct *p)
+{
+	if (!cond) {
+		pr_err("LOCKDEP: %pS %ps %ps %ps\n",
+		       __builtin_return_address(0),
+		       __builtin_return_address(1),
+		       __builtin_return_address(2),
+		       __builtin_return_address(3));
+		WALT_BUG(WALT_BUG_WALT, p,
+			 "running_cpu=%d cpu_rq=%d cpu_rq lock not held",
+			 raw_smp_processor_id(), cpu);
+	}
+}
+
+#ifdef CONFIG_LOCKDEP
+#define walt_lockdep_assert_held(l, cpu, p)				\
+	walt_lockdep_assert(lockdep_is_held(l) != LOCK_STATE_NOT_HELD, cpu, p)
+#else
+#define walt_lockdep_assert_held(l, cpu, p) do { (void)(l); } while (0)
+#endif
+
+#define walt_lockdep_assert_rq(rq, p)			\
+	walt_lockdep_assert_held(&rq->__lock, cpu_of(rq), p)
 
 #endif /* _WALT_H */
