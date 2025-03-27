@@ -1193,7 +1193,7 @@ err_free_log_buf:
 	memblock_free_ptr(new_log_buf, new_log_buf_len);
 }
 
-static bool __read_mostly ignore_loglevel;
+static bool __read_mostly ignore_loglevel = true;
 
 static int __init ignore_loglevel_setup(char *str)
 {

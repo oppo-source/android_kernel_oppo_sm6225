@@ -506,6 +506,25 @@ config OPEN_DICE
 	  and sealing.
 
 	  If unsure, say N.
+#ifdef OPLUS_FEATURE_RF_CABLE_DETECT
+config OPLUS_RF_CABLE_MONITOR
+	tristate "OPLUS rf cable monitor system"
+	depends on OF
+	select PINMUX
+	default n
+	help
+	  Say Y here to enable OPLUS rf cable monitor system support
+#endif /* OPLUS_FEATURE_RF_CABLE_DETECT */
+
+#ifdef OPLUS_FEATURE_RF_CABLE_DETECT
+config OPLUS_RF_CABLE_MONITOR
+	tristate "OPLUS rf cable monitor system"
+	depends on OF
+	select PINMUX
+	default n
+	help
+	  Say Y here to enable OPLUS rf cable monitor system support
+#endif /* OPLUS_FEATURE_RF_CABLE_DETECT */
 
 config PROFILER
 	tristate "Qualcomm Technologies, Inc. trustzone Communicator driver"
@@ -533,4 +552,6 @@ source "drivers/misc/habanalabs/Kconfig"
 source "drivers/misc/uacce/Kconfig"
 source "drivers/misc/pvpanic/Kconfig"
 source "drivers/misc/qrc/Kconfig"
+source "drivers/misc/ocp2130_bias/Kconfig"
+source "drivers/misc/oplus_power_notifier/Kconfig"
 endmenu

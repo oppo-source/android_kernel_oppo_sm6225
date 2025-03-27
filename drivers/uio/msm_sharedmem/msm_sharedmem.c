@@ -17,7 +17,12 @@
 
 #define CLIENT_ID_PROP "qcom,client-id"
 #define MPSS_RMTS_CLIENT_ID 1
-
+//#ifdef VENDOR_EDIT
+//add for nv backup and restore
+//#ifdef OPLUS_FEATURE_NV_BACKUP
+#define MPSS_OEMBACK_CLIENT_ID 4
+//#endif /* OPLUS_FEATURE_NV_BACKUP */
+//#endif /* VENDOR_EDIT */
 static int uio_get_mem_index(struct uio_info *info, struct vm_area_struct *vma)
 {
 	if (vma->vm_pgoff >= MAX_UIO_MAPS)
@@ -68,14 +73,21 @@ static int sharedmem_mmap(struct uio_info *info, struct vm_area_struct *vma)
 /* Setup the shared ram permissions.
  * This function currently supports the mpss and nav clients only.
  */
-static void setup_shared_ram_perms(u32 client_id, phys_addr_t addr, u32 size,
+static int setup_shared_ram_perms(u32 client_id, phys_addr_t addr, u32 size,
 				   bool vm_nav_path)
 {
-	int ret;
+	int ret = -EINVAL;
 	u32 source_vmlist[1] = {VMID_HLOS};
 
-	if (client_id != MPSS_RMTS_CLIENT_ID)
-		return;
+	//add for nv backup and restore
+	//#ifdef OPLUS_FEATURE_NV_BACKUP
+	//if (client_id != MPSS_RMTS_CLIENT_ID) {
+	//#else
+	if ((client_id != MPSS_RMTS_CLIENT_ID) && (client_id != MPSS_OEMBACK_CLIENT_ID)) {
+	//#ifdef OPLUS_FEATURE_NV_BACKUP
+		pr_err("invalid client id %u\n", client_id);
+		return ret;
+	}
 
 	if (vm_nav_path) {
 		int dest_vmids[3] = {VMID_HLOS, VMID_MSS_MSA, VMID_NAV};
@@ -100,6 +112,7 @@ static void setup_shared_ram_perms(u32 client_id, phys_addr_t addr, u32 size,
 			pr_err("hyp_assign_phys failed IPA=0x016%pa size=%u err=%d\n",
 				&addr, size, ret);
 	}
+	return ret;
 }
 
 static int msm_sharedmem_probe(struct platform_device *pdev)
@@ -166,8 +179,11 @@ static int msm_sharedmem_probe(struct platform_device *pdev)
 
 		shared_mem = dma_alloc_coherent(&pdev->dev, shared_mem_tot_sz,
 					&shared_mem_pyhsical, GFP_KERNEL);
-		if (shared_mem == NULL)
+		if (shared_mem == NULL) {
+			pr_err("Shared mem alloc client=%s, size=%u\n",
+				clnt_res->name, shared_mem_size);
 			return -ENOMEM;
+		}
 		if (guard_memory)
 			shared_mem_pyhsical += SZ_4K;
 	}

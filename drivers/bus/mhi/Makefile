@@ -1,8 +1,10 @@
-# Host MHI stack
-obj-y += host/
 
-# MHI Devices stack
+# core layer
+obj-y += controllers/
 obj-y += devices/
 
-#MHI Controller stack
-obj-y += controllers/
+obj-$(CONFIG_MHI_BUS_PCI_GENERIC) += mhi_pci_generic.o
+mhi_pci_generic-y += pci_generic.o
+
+# Host MHI stack
+obj-y += host/

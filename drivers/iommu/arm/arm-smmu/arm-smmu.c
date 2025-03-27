@@ -57,6 +57,7 @@
 
 #define CREATE_TRACE_POINTS
 #include "arm-smmu-trace.h"
+#include <soc/oplus/system/oplus_project.h>
 
 /*
  * Apparently, some Qualcomm arm64 platforms which appear to expose their SMMU
@@ -2264,7 +2265,11 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	 * to 5-10sec worth of reprogramming the context bank, while
 	 * the system appears to be locked up to the user.
 	 */
-	pm_runtime_set_autosuspend_delay(smmu->dev, 20);
+	if(is_project(24281) || is_project(24282) || is_project(24283) || is_project(24284)){
+		pm_runtime_set_autosuspend_delay(smmu->dev, 5);
+	} else {
+		pm_runtime_set_autosuspend_delay(smmu->dev, 20);
+	}
 	pm_runtime_use_autosuspend(smmu->dev);
 
 rpm_put:

@@ -39,6 +39,8 @@
 #include <linux/qtee_shmbridge.h>
 #include <linux/crypto-qti-common.h>
 #include <linux/suspend.h>
+#include <soc/oplus/device_info.h>
+#include <soc/oplus/last_boot_reason.h>
 
 #if IS_ENABLED(CONFIG_MMC_SDHCI_MSM_SCALING)
 #include "sdhci-msm-scaling.h"
@@ -398,12 +400,15 @@ static void msm_set_clock_rate_for_bus_mode(struct sdhci_host *host,
 	struct clk *core_clk = msm_host->bulk_clks[0].clk;
 	unsigned long achieved_rate;
 	unsigned int desired_rate;
-	unsigned int mult;
+	unsigned int mult = 1;
 	int rc;
 
-	mult = msm_get_clock_mult_for_bus_mode(host);
-	desired_rate = clock * mult;
-
+	if ((clock < CORE_FREQ_100MHZ) && (host->mmc->ios.timing == MMC_TIMING_MMC_HS400))
+		desired_rate = clock;
+	else {
+		mult = msm_get_clock_mult_for_bus_mode(host);
+		desired_rate = clock * mult;
+	}
 	if (curr_ios.timing == MMC_TIMING_SD_HS &&
 			msm_host->uses_level_shifter)
 		desired_rate = LEVEL_SHIFTER_HIGH_SPEED_FREQ;
@@ -5357,6 +5362,12 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	if (host->mmc->caps & MMC_CAP_NONREMOVABLE) {
 		register_trace_android_rvh_mmc_cache_card_properties(mmc_cache_card, NULL);
 		register_trace_android_rvh_partial_init(partial_init, NULL);
+	}
+
+	if(!strcmp(mmc_hostname(msm_host->mmc), "mmc0")) {
+		pr_err("%s: register emmc device info\n", __func__);
+		register_device_proc_for_emmc("emmc", "emmc_version", msm_host->mmc);
+		set_device_type_for_mmc();
 	}
 	return 0;
 
