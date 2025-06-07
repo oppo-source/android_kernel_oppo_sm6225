@@ -168,6 +168,7 @@ obj-$(CONFIG_HORAE_THERMAL_SHELL) += oplus_cpu/thermal/
 #endif /* OPLUS_FEATURE_THERMAL_HORAE */
 obj-$(CONFIG_UA_KERNEL_CPU_IOCTL) += oplus_cpu/uad/
 obj-$(CONFIG_OPLUS_FEATURE_OCH) += oplus_cpu/cpufreq_health/
+obj-$(CONFIG_OPLUS_OMRG) += oplus_cpu/oplus_omrg/
 #
 # ANDROID: GKI: Generate headerfiles required for gki_module.o
 #

@@ -48,10 +48,6 @@ static int init_flag[MAX_CLUSTERS];
 #include <linux/cpufreq_bouncing.h>
 #endif
 
-#if IS_ENABLED(CONFIG_OPLUS_OMRG)
-#include <linux/oplus_omrg.h>
-#endif
-
 struct waltgov_tunables {
 	struct gov_attr_set	attr_set;
 	unsigned int		up_rate_limit_us;
@@ -1506,10 +1502,6 @@ static int waltgov_init(struct cpufreq_policy *policy)
 		return -EBUSY;
 
 	cpufreq_enable_fast_switch(policy);
-
-#if IS_ENABLED(CONFIG_OPLUS_OMRG)
-        omrg_cpufreq_register(policy);
-#endif
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_OCH)
 	if(cpufreq_health_register(policy))

@@ -889,6 +889,10 @@ source "kernel/oplus_cpu/sched/Kconfig"
 #ifdef OPLUS_FEATURE_THERMAL_HORAE
 source "kernel/oplus_cpu/thermal/Kconfig"
 #endif /* OPLUS_FEATURE_THERMAL_HORAE */
+
+#ifdef CONFIG_OPLUS_OMRG
+source "kernel/oplus_cpu/oplus_omrg/Kconfig"
+#endif /* CONFIG_OPLUS_OMRG */
 endmenu
 
 #

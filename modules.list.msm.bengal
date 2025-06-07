@@ -129,4 +129,4 @@ oplus_bsp_midas.ko
 oplus_power_notifier.ko
 oplus_storage_log.ko
 oplus_uprobe.ko
-
+oplus_omrg.ko

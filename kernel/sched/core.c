@@ -97,6 +97,8 @@ const_debug unsigned int sysctl_sched_nr_migrate = 32;
  */
 unsigned int sysctl_sched_rt_period = 1000000;
 
+unsigned long stop_fair_group = 0;
+
 __read_mostly int scheduler_running;
 
 #ifdef CONFIG_SCHED_CORE
@@ -10480,6 +10482,13 @@ static u64 cpu_shares_read_u64(struct cgroup_subsys_state *css,
 			       struct cftype *cft)
 {
 	struct task_group *tg = css_tg(css);
+
+	/*
+	 * We can't change the weight of the root cgroup.
+	 */
+	if (!tg->se[0]) {
+		return (u64)stop_fair_group;
+	}
 
 	return (u64) scale_load_down(tg->shares);
 }
