@@ -228,3 +228,41 @@ config SCSI_UFS_HWMON
 	  a hardware monitoring device will be created for the UFS device.
 
 	  If unsure, say N.
+
+config UFS_HAGC
+	bool "UFS Host Activate Garbage Collection"
+	depends on SCSI_UFSHCD
+	help
+	  UFS HAGC Feature Enable
+
+config UFSHID_YMTC
+	bool "UFS YMTC Host Initiated Defrag support"
+	depends on SCSI_UFSHCD
+	help
+	  UFS HID Feature Enable
+
+config UFSHID_YMTC_POC
+	bool "UFSHID YMTC POC test"
+	depends on SCSI_UFSHCD && UFSHID_YMTC
+	help
+	  UFS HID YMTC POC test
+	  1. block to enter suspend state
+	  2. auto_hibern8 enable/disable (HCI)
+	  3. set flag bDefragOperation
+	  4. debug msg enable (default : disable)
+
+config UFSHID_FLASTOR
+	bool "UFS FLASTOR Host Initiated Defrag support"
+	depends on SCSI_UFSHCD
+	help
+	  UFS HID Feature Enable
+
+config UFSHID_FLASTOR_POC
+	bool "UFSHID FLASTOR POC test"
+	depends on SCSI_UFSHCD && UFSHID_FLASTOR
+	help
+	  UFS HID FLASTOR POC test
+	  1. block to enter suspend state
+	  2. auto_hibern8 enable/disable (HCI)
+	  3. set flag bDefragOperation
+	  4. debug msg enable (default : disable)

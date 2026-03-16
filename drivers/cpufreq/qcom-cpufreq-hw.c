@@ -19,6 +19,10 @@
 #include <linux/qcom-cpufreq-hw.h>
 #include <linux/topology.h>
 
+#if IS_ENABLED(CONFIG_OPLUS_OMRG)
+#include <../kernel/oplus_cpu/oplus_omrg/oplus_omrg.h>
+#endif
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/dcvsh.h>
 
@@ -215,6 +219,10 @@ static unsigned int qcom_cpufreq_hw_fast_switch(struct cpufreq_policy *policy,
 
 	index = policy->cached_resolved_idx;
 	writel_relaxed(index, data->base + soc_data->reg_perf_state);
+
+#if IS_ENABLED(CONFIG_OPLUS_OMRG)
+	omrg_cpufreq_check_limit(policy, policy->freq_table[index].frequency);
+#endif
 
 	return policy->freq_table[index].frequency;
 }

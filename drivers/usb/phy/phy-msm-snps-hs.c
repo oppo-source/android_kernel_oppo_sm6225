@@ -24,16 +24,21 @@
 #include <linux/debugfs.h>
 #include <linux/qcom_scm.h>
 #include <linux/types.h>
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#include <linux/proc_fs.h>
+#endif
 
 #define USB2_PHY_USB_PHY_UTMI_CTRL0		(0x3c)
 #define OPMODE_MASK				(0x3 << 3)
 #define OPMODE_NONDRIVING			(0x1 << 3)
 #define SLEEPM					BIT(0)
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
 #define OPMODE_NORMAL				(0x00)
 #define TERMSEL					BIT(5)
-
 #define USB2_PHY_USB_PHY_UTMI_CTRL1		(0x40)
 #define XCVRSEL					BIT(0)
+#endif
 
 #define USB2_PHY_USB_PHY_UTMI_CTRL5		(0x50)
 #define POR					BIT(1)
@@ -126,7 +131,10 @@ struct msm_hsphy {
 
 	int			*param_override_seq;
 	int			param_override_seq_cnt;
-
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	int			*param_override_host_seq;
+	int			param_override_host_seq_cnt;
+#endif
 	void __iomem		*phy_rcal_reg;
 	u32			rcal_mask;
 
@@ -148,6 +156,12 @@ struct msm_hsphy {
 	u8			param_ovrd3;
 	const struct hs_phy_priv_data *phy_priv_data;
 };
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define REPEATER_PARA_COUNT_MAX 24
+static u32 hs_repeater_parameters_seq[REPEATER_PARA_COUNT_MAX] = {0};
+static u8 hs_repeater_parameters_cnt = 0;
+#endif
 
 static void msm_hsphy_enable_clocks(struct msm_hsphy *phy, bool on)
 {
@@ -503,12 +517,24 @@ static int msm_hsphy_init(struct usb_phy *uphy)
 
 	msm_usb_write_readback(phy->base, USB2_PHY_USB_PHY_HS_PHY_CTRL1,
 				VBUSVLDEXT0, VBUSVLDEXT0);
-
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	if ((phy->phy.flags & PHY_HOST_MODE) && phy->param_override_host_seq) {
+		hsusb_phy_write_seq(phy->base, phy->param_override_host_seq,
+				phy->param_override_host_seq_cnt, 0);
+	} else if(hs_repeater_parameters_cnt > 0) {
+		dev_err(phy->phy.dev, "use oplus repeater parameters");
+		hsusb_phy_write_seq(phy->base, hs_repeater_parameters_seq,
+				hs_repeater_parameters_cnt, 0);
+	} else if(phy->param_override_seq) {
+		hsusb_phy_write_seq(phy->base, phy->param_override_seq,
+				phy->param_override_seq_cnt, 0);
+	}
 	/* set parameter ovrride  if needed */
+#else
 	if (phy->param_override_seq)
 		hsusb_phy_write_seq(phy->base, phy->param_override_seq,
 				phy->param_override_seq_cnt, 0);
-
+#endif
 	if (phy->pre_emphasis) {
 		u8 val = TXPREEMPAMPTUNE0(phy->pre_emphasis) &
 				TXPREEMPAMPTUNE0_MASK;
@@ -550,7 +576,7 @@ static int msm_hsphy_init(struct usb_phy *uphy)
 			PARAM_OVRD_MASK, phy->param_ovrd3);
 	}
 
-	dev_dbg(uphy->dev, "x0:%08x x1:%08x x2:%08x x3:%08x\n",
+	dev_err(uphy->dev, "x0:%08x x1:%08x x2:%08x x3:%08x\n",
 	readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X0),
 	readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X1),
 	readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X2),
@@ -911,6 +937,150 @@ static void msm_hsphy_create_debugfs(struct msm_hsphy *phy)
 	debugfs_create_x8("param_ovrd3", 0644, phy->root, &phy->param_ovrd3);
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static ssize_t proc_repeater_parameters_read(struct file *filp, char __user *buf,
+				     size_t count, loff_t *ppos)
+{
+	struct msm_hsphy *phy = PDE_DATA(file_inode(filp));
+	uint8_t ret;
+	int i;
+	char page[128];
+	int index = 0;
+
+	if (!phy) {
+		pr_err("eusb2_repeater phy is null\n");
+		return -EFAULT;
+	}
+
+	if (hs_repeater_parameters_cnt > 0) {
+		for (i = 0; i < hs_repeater_parameters_cnt; i += 2) {
+			index += sprintf(page + index, "0x%02x,0x%02x,",
+					hs_repeater_parameters_seq[i], hs_repeater_parameters_seq[i + 1]);
+		}
+		if (page[index - 1] == ',')
+			page[index - 1] = '\0';
+	} else {
+		sprintf(page, "%s", "default");
+	}
+
+	ret = simple_read_from_buffer(buf, count, ppos, page, strlen(page));
+	return ret;
+}
+
+static ssize_t proc_repeater_parameters_write(struct file *filp, const char __user *buf,
+				      size_t count, loff_t *lo)
+{
+	struct msm_hsphy *phy = PDE_DATA(file_inode(filp));
+	char buffer[128] = {0};
+	u32 seq[REPEATER_PARA_COUNT_MAX] = {0};
+	char *str = buffer;
+	int val;
+	int cnt = 0;
+	int i, j;
+
+	if (!phy) {
+		pr_err("eusb2_repeater phy is null\n");
+		return -EFAULT;
+	}
+
+	if (count > sizeof(buffer) - 1) {
+		dev_err(phy->phy.dev, "data length out of range, count=%zu\n", count);
+		return -EFAULT;
+	}
+
+	if (copy_from_user(buffer, buf, count)) {
+		dev_err(phy->phy.dev, "copy from user error\n");
+		return -EFAULT;
+	}
+
+	if (strncmp(buffer, "reset", strlen("reset")) == 0) {
+		dev_err(phy->phy.dev, "parameters reset\n");
+		memset(hs_repeater_parameters_seq, 0, sizeof(hs_repeater_parameters_seq));
+		hs_repeater_parameters_cnt = 0;
+		return count;
+	}
+
+	while (*str != '\0' && *str != '\n') {
+		if (sscanf(str, "%x", &val)) {
+			seq[cnt++] = val;
+			str = strstr(str, ",");
+			if (!str)
+				break;
+			else
+				str++;
+			if (cnt == REPEATER_PARA_COUNT_MAX)
+				break;
+		} else {
+			dev_err(phy->phy.dev, "invalid data, buffer=%s\n", buffer);
+			return -EFAULT;
+		}
+	}
+
+	if (cnt % 2) {
+		dev_err(phy->phy.dev, "invalid data count, parameters reset, buffer=%s\n", buffer);
+		memset(hs_repeater_parameters_seq, 0, sizeof(hs_repeater_parameters_seq));
+		hs_repeater_parameters_cnt = 0;
+		return -EFAULT;
+	} else {
+		/* all addr param must be configed in devicetree */
+		for (i = 1; i < cnt; i += 2) {
+			for (j = 1; j < phy->param_override_seq_cnt; j += 2) {
+				if (seq[i] == phy->param_override_seq[j])
+					break;
+			}
+			if (j > phy->param_override_seq_cnt) {
+				dev_err(phy->phy.dev, "param 0x%x is not configed in devicetree, buffer=%s\n", seq[i], buffer);
+				return -EFAULT;
+			}
+		}
+
+		/* all val param must be lower than 0xff */
+		for (i = 0; i < cnt; i += 2) {
+			if ((seq[i] >> 8) != 0) {
+				dev_err(phy->phy.dev, "param 0x%x is invalid, buffer=%s\n", seq[i], buffer);
+				return -EFAULT;
+			}
+		}
+
+		dev_err(phy->phy.dev, "parameters update count = %d\n", cnt);
+		for (i = 0; i < cnt; i += 2)
+			dev_err(phy->phy.dev, "seq[%d]:0x%02x,0x%02x\n", i, seq[i], seq[i + 1]);
+		memcpy(hs_repeater_parameters_seq, seq, sizeof(seq));
+		hs_repeater_parameters_cnt = cnt;
+	}
+
+	return count;
+}
+
+static const struct proc_ops proc_repeater_parameters_ops = {
+	.proc_write = proc_repeater_parameters_write,
+	.proc_read = proc_repeater_parameters_read,
+};
+
+static int init_repeater_parameters_proc(struct msm_hsphy *phy)
+{
+	int ret = 0;
+	struct proc_dir_entry *prEntry_da = NULL;
+	struct proc_dir_entry *prEntry_tmp = NULL;
+
+	prEntry_da = proc_mkdir("usb", NULL);
+	if (prEntry_da == NULL) {
+		pr_err("Couldn't create usb proc entry\n");
+		return -ENOMEM;
+	}
+
+	prEntry_tmp = proc_create_data("repeater_parameters", 0664, prEntry_da,
+				       &proc_repeater_parameters_ops, phy);
+	if (prEntry_tmp == NULL) {
+		proc_remove(prEntry_da);
+		ret = -ENOMEM;
+		pr_err("Couldn't create repeater_parameters entry\n");
+	}
+
+	return ret;
+}
+#endif
+
 static int msm_hsphy_probe(struct platform_device *pdev)
 {
 	struct msm_hsphy *phy;
@@ -1028,7 +1198,36 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 			return ret;
 		}
 	}
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	phy->param_override_host_seq_cnt = of_property_count_elems_of_size(
+					dev->of_node,
+					"qcom,param-override-seq-host",
+					sizeof(*phy->param_override_host_seq));
 
+	if (phy->param_override_host_seq_cnt > 0) {
+		phy->param_override_host_seq = devm_kcalloc(dev,
+					phy->param_override_host_seq_cnt,
+					sizeof(*phy->param_override_host_seq),
+					GFP_KERNEL);
+		if (!phy->param_override_host_seq)
+			return -ENOMEM;
+
+		if (phy->param_override_host_seq_cnt % 2) {
+			dev_err(dev, "param_override_seq_host_cnt\n");
+			return -EINVAL;
+		}
+
+		ret = of_property_read_u32_array(dev->of_node,
+				"qcom,param-override-seq-host",
+				phy->param_override_host_seq,
+				phy->param_override_host_seq_cnt);
+		if (ret) {
+			dev_err(dev, "qcom,param-override-host-seq read failed %d\n",
+				ret);
+			return ret;
+		}
+	}
+#endif
 	ret = of_property_read_u32_array(dev->of_node, "qcom,vdd-voltage-level",
 					 (u32 *) phy->vdd_levels,
 					 ARRAY_SIZE(phy->vdd_levels));
@@ -1036,6 +1235,7 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 		dev_err(dev, "error reading qcom,vdd-voltage-level property\n");
 		goto err_ret;
 	}
+
 
 	phy->vdd = devm_regulator_get(dev, "vdd");
 	if (IS_ERR(phy->vdd)) {
@@ -1089,6 +1289,11 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 	 */
 	if (phy->eud_enable_reg && readl_relaxed(phy->eud_enable_reg))
 		msm_hsphy_enable_power(phy, true);
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	init_repeater_parameters_proc(phy);
+#endif
+
 	return 0;
 
 err_ret:
@@ -1101,6 +1306,10 @@ static int msm_hsphy_remove(struct platform_device *pdev)
 
 	if (!phy)
 		return 0;
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	remove_proc_entry("usb", NULL);
+#endif
 
 	if (phy->usb_psy)
 		power_supply_put(phy->usb_psy);

@@ -161,6 +161,9 @@
 #define PSY_IIO_VOLTAGE_QNOVO       0x7e
 #define PSY_IIO_CURRENT_QNOVO       0x7f
 
+//#ifdef OPLUS_FEATURE_CHG_BASIC
+#define PSY_IIO_PD_SDP				0xa0
+//#endif
 /* FG */
 #define PSY_IIO_CHARGE_COUNTER_SHADOW		0x80
 #define PSY_IIO_CHARGE_NOW_RAW				0x81

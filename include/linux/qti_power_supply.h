@@ -32,9 +32,9 @@ enum {
 };
 
 enum {
-	QC_CTM_DISABLE = BIT(0),
-	QC_THERMAL_BALANCE_DISABLE = BIT(1),
-	QC_INOV_THERMAL_DISABLE = BIT(2),
+	QC_CTM_DISABLE = 1 << 0, /* BIT(0), */
+	QC_THERMAL_BALANCE_DISABLE = 1 << 1, /* BIT(1), */
+	QC_INOV_THERMAL_DISABLE = 1 << 2, /* BIT(2), */
 };
 
 enum {

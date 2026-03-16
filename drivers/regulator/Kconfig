@@ -1548,6 +1548,38 @@ config REGULATOR_STUB
 	  Consumers can use stub regulator device with proper constraint
 	  checking while the real regulator driver is being developed.
 
+config FAN53870_LDO
+	tristate "FAN53870 PMIC I2C Driver"
+	help
+	  Say Y here to support the FAN53870 PMIC chip.
+	  This driver controls FAN53870 PMIC chip and the voltage
+	  regulators found in Qualcomm Technologies Inc. FAN53870
+	  PMIC.
+
+config REGULATOR_OPLUS_WL2868C
+	tristate "WL2868C PMIC I2C Driver"
+	help
+	  Say Y here to support the WL2868C PMIC chip.
+	  This driver controls WL2868C PMIC chip and the voltage
+	  regulators found in Qualcomm Technologies Inc. WL2868C
+	  PMIC.
+
+config REGULATOR_AW37004
+	tristate "config oplus camera_aw37004 software"
+	help
+	  Say Y here to support the AW37004 PMIC chip.
+	  This driver controls AW37004 PMIC chip and the voltage
+	  regulators found in Qualcomm Technologies Inc. AW37004
+	  PMIC.
+
+config REGULATOR_WL2866D
+	tristate "config oplus camera_wl2866d software"
+	help
+	  Say Y here to support the WL2866D PMIC chip.
+	  This driver controls WL2866D PMIC chip and the voltage
+	  regulators found in Qualcomm Technologies Inc. WL2866D
+	  PMIC.
+
 config REGULATOR_QTI_OCP_NOTIFIER
 	tristate "Qualcomm Technologies, Inc. Regulator OCP Notifier Driver"
 	help

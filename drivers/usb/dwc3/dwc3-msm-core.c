@@ -543,6 +543,9 @@ struct dwc3_msm {
 	struct icc_path		*icc_paths[3];
 	struct power_supply	*usb_psy;
 	struct iio_channel	*chg_type;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	bool			dwc3_usb_lpm_status;
+#endif
 	bool			in_host_mode;
 	bool			in_device_mode;
 	enum usb_device_speed	max_rh_port_speed;
@@ -635,6 +638,11 @@ struct dwc3_msm {
 #define USB_SSPHY_1P8_VOL_MAX		1800000 /* uV */
 #define USB_SSPHY_1P8_HPM_LOAD		23000	/* uA */
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define IN_LPM_STATUS false
+#define NOT_IN_LPM_STATUS true
+struct dwc3_msm *g_mdwc = NULL;
+#endif
 /* unfortunately, dwc3 core doesn't manage multiple dwc3 instances for trace */
 void *dwc_trace_ipc_log_ctxt;
 
@@ -4109,6 +4117,9 @@ static int dwc3_msm_suspend(struct dwc3_msm *mdwc, bool force_power_collapse)
 		enable_irq(mdwc->wakeup_irq[PWR_EVNT_IRQ].irq);
 
 	dev_info(mdwc->dev, "DWC3 in low power mode\n");
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	mdwc->dwc3_usb_lpm_status = IN_LPM_STATUS;
+#endif
 	dbg_event(0xFF, "Ctl Sus", atomic_read(&mdwc->in_lpm));
 
 	/* kick_sm if it is waiting for lpm sequence to finish */
@@ -4567,6 +4578,15 @@ static irqreturn_t msm_dwc3_pwr_irq(int irq, void *data)
 }
 
 static void dwc3_otg_sm_work(struct work_struct *w);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+bool get_dwc3_msm_lpm_status(void)
+{
+	if (g_mdwc == NULL)
+		return false;
+	return g_mdwc->dwc3_usb_lpm_status;
+}
+EXPORT_SYMBOL(get_dwc3_msm_lpm_status);
+#endif
 
 static int dwc3_msm_get_clk_gdsc(struct dwc3_msm *mdwc)
 {
@@ -4715,6 +4735,9 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 	struct dwc3_msm *mdwc = enb->mdwc;
 	char *eud_str;
 	const char *edev_name;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	bool is_cdp;
+#endif
 
 	if (!edev || !mdwc)
 		return NOTIFY_DONE;
@@ -4761,17 +4784,26 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 		mdwc->vbus_active = event;
 	}
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/*
+	 * In case of ADSP based charger detection driving a pulse on
+	 * DP to ensure proper CDP detection will be taken care by
+	 * ADSP.
+	 */
+	is_cdp = ((mdwc->apsd_source == IIO) &&
+		(get_chg_type(mdwc) == POWER_SUPPLY_TYPE_USB_CDP)) ||
+		((mdwc->apsd_source == PSY) &&
+		(get_chg_type(mdwc) == POWER_SUPPLY_USB_TYPE_CDP));
+
 	/*
 	 * Drive a pulse on DP to ensure proper CDP detection
 	 * and only when the vbus connect event is a valid one.
 	 */
-
-	if (get_chg_type(mdwc) == POWER_SUPPLY_TYPE_USB_CDP &&
-			mdwc->vbus_active && !mdwc->check_eud_state) {
+	if (is_cdp && mdwc->vbus_active && !mdwc->check_eud_state) {
 		dev_dbg(mdwc->dev, "Connected to CDP, pull DP up\n");
 		mdwc->hs_phy->charger_detect(mdwc->hs_phy);
 	}
-
+#endif
 
 	mdwc->ext_idx = enb->idx;
 	if (mdwc->dr_mode == USB_DR_MODE_OTG && !mdwc->in_restart)
@@ -4811,8 +4843,11 @@ static int get_chg_type(struct dwc3_msm *mdwc)
 			}
 		}
 
-		power_supply_get_property(mdwc->usb_psy,
+		ret = power_supply_get_property(mdwc->usb_psy,
 				POWER_SUPPLY_PROP_USB_TYPE, &pval);
+		if (ret < 0) {
+			dev_err(mdwc->dev, "failed to get usb_psy type\n");
+		}
 		value = pval.intval;
 		break;
 	default:
@@ -6017,7 +6052,9 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, mdwc);
 	mdwc->dev = &pdev->dev;
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	g_mdwc = mdwc;
+#endif
 	INIT_LIST_HEAD(&mdwc->req_complete_list);
 	INIT_WORK(&mdwc->resume_work, dwc3_resume_work);
 	INIT_WORK(&mdwc->restart_usb_work, dwc3_restart_usb_work);
@@ -6333,8 +6370,20 @@ static int vbus_regulator_toggle(struct dwc3_msm *mdwc, bool on)
 static int dwc3_msm_remove(struct platform_device *pdev)
 {
 	struct dwc3_msm	*mdwc = platform_get_drvdata(pdev);
-	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
+// #ifdef OPLUS_FEATURE_CHG_BASIC
+	struct dwc3 *dwc = NULL;
+// #else
+//	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
+// #endif
 	int i, ret_pm;
+
+// #ifdef OPLUS_FEATURE_CHG_BASIC
+	if (!mdwc->dwc3) {
+		dev_err(mdwc->dev,"mdwc->dwc3 is NULL!!!\n");
+	} else {
+		dwc = platform_get_drvdata(mdwc->dwc3);
+	}
+// #endif
 
 	usb_role_switch_unregister(mdwc->role_switch);
 
@@ -6365,7 +6414,12 @@ static int dwc3_msm_remove(struct platform_device *pdev)
 
 	if (mdwc->hs_phy)
 		mdwc->hs_phy->flags &= ~PHY_HOST_MODE;
-	dwc3_msm_notify_event(dwc, DWC3_GSI_EVT_BUF_FREE, 0);
+// #ifdef OPLUS_FEATURE_CHG_BASIC
+	if (dwc)
+		dwc3_msm_notify_event(dwc, DWC3_GSI_EVT_BUF_FREE, 0);
+// #else
+//	dwc3_msm_notify_event(dwc, DWC3_GSI_EVT_BUF_FREE, 0);
+// #endif
 	platform_device_put(mdwc->dwc3);
 	of_platform_depopulate(&pdev->dev);
 
@@ -6587,7 +6641,7 @@ static int dwc3_msm_host_notifier(struct notifier_block *nb,
 		/* USB root hub device */
 		if (event == USB_DEVICE_ADD) {
 			pm_runtime_use_autosuspend(&udev->dev);
-			pm_runtime_set_autosuspend_delay(&udev->dev, 1000);
+			pm_runtime_set_autosuspend_delay(&udev->dev, 2000);
 		}
 	}
 
@@ -7109,6 +7163,9 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 	case DRD_STATE_IDLE:
 		if (test_bit(WAIT_FOR_LPM, &mdwc->inputs)) {
 			dev_dbg(mdwc->dev, "still not in lpm, wait.\n");
+#ifdef OPLUS_FEATURE_CHG_BASIC
+			mdwc->dwc3_usb_lpm_status = NOT_IN_LPM_STATUS;
+#endif
 			dbg_event(0xFF, "WAIT_FOR_LPM", 0);
 			break;
 		}

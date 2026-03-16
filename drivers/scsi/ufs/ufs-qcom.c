@@ -17,6 +17,7 @@
 #include <linux/clk/qcom.h>
 #include <linux/devfreq.h>
 #include <linux/cpu.h>
+#include <trace/hooks/ufshcd.h>
 #include <linux/blk-mq.h>
 #include <linux/blk_types.h>
 #include <linux/thermal.h>
@@ -26,6 +27,13 @@
 #include <linux/ipc_logging.h>
 #include <soc/qcom/minidump.h>
 #include <linux/nvmem-consumer.h>
+#include <scsi/scsi.h>
+#include <scsi/scsi_ioctl.h>
+#include <scsi/scsi_cmnd.h>
+
+//Optimization.Storage.UFS Add for /proc/devinfo/ufs
+#include <soc/oplus/device_info.h>
+#include <linux/async.h>
 
 #include "ufshcd.h"
 #include "ufshcd-pltfrm.h"
@@ -38,6 +46,7 @@
 #include "ufshci.h"
 #include "ufs_quirks.h"
 #include "ufshcd-crypto-qti.h"
+#include "../sd.h"
 #if IS_ENABLED(CONFIG_QTI_CRYPTO_FDE)
 #include <linux/crypto-qti-common.h>
 #endif
@@ -108,7 +117,12 @@
 static char android_boot_dev[ANDROID_BOOT_DEV_MAX];
 
 static DEFINE_PER_CPU(struct freq_qos_request, qos_min_req);
+struct ufs_transmission_status_t ufs_transmission_status;
+struct device_attribute ufs_transmission_status_attr;
 
+/*feature-flashaging806-v001-1-begin*/
+struct unipro_signal_quality_ctrl signalCtrl;
+/*feature-flashaging806-v001-1-end*/
 enum {
 	TSTBUS_UAWM,
 	TSTBUS_UARM,
@@ -173,6 +187,7 @@ static int ufs_qcom_ber_threshold_set(const char *val, const struct kernel_param
 static int ufs_qcom_ber_duration_set(const char *val, const struct kernel_param *kp);
 static void ufs_qcom_ber_mon_init(struct ufs_hba *hba);
 static void ufs_qcom_populate_available_cpus(struct ufs_hba *hba);
+static bool ufs_qcom_check_spec(struct ufs_hba *hba, u16 spec_version);
 
 static s64 idle_time[UFS_QCOM_BER_MODE_MAX];
 static ktime_t idle_start;
@@ -760,11 +775,8 @@ static void ufs_qcom_select_unipro_mode(struct ufs_qcom_host *host)
 		   ufs_qcom_cap_qunipro(host) ? QUNIPRO_SEL : 0,
 		   REG_UFS_CFG1);
 
-	if (host->hw_ver.major == 0x05)
+	if (host->hw_ver.major >= 0x05)
 		ufshcd_rmwl(host->hba, QUNIPRO_G4_SEL, 0, REG_UFS_CFG0);
-
-	/* make sure above configuration is applied before we return */
-	mb();
 }
 
 /*
@@ -926,7 +938,7 @@ static int ufs_qcom_enable_hw_clk_gating(struct ufs_hba *hba)
 			UNUSED_UNIPRO_CLK_GATED, UFS_AH8_CFG);
 
 	/* Ensure that HW clock gating is enabled before next operations */
-	mb();
+	ufshcd_readl(hba, REG_UFS_CFG2);
 
 	/* Enable Qunipro internal clock gating if supported */
 	if (!ufs_qcom_cap_qunipro_clk_gating(host))
@@ -1112,7 +1124,7 @@ static int __ufs_qcom_cfg_timers(struct ufs_hba *hba, u32 gear,
 		 * make sure above write gets applied before we return from
 		 * this function.
 		 */
-		mb();
+		ufshcd_readl(hba, REG_UFS_SYS1CLK_1US);
 	}
 
 	if (ufs_qcom_cap_qunipro(host))
@@ -1178,9 +1190,9 @@ static int __ufs_qcom_cfg_timers(struct ufs_hba *hba, u32 gear,
 		mb();
 	}
 
-	if (update_link_startup_timer) {
+	if (update_link_startup_timer && host->hw_ver.major != 0x5) {
 		ufshcd_writel(hba, ((core_clk_rate / MSEC_PER_SEC) * 100),
-			      REG_UFS_PA_LINK_STARTUP_TIMER);
+			      REG_UFS_CFG0);
 		/*
 		 * make sure that this configuration is applied before
 		 * we return
@@ -1658,14 +1670,33 @@ static void ufs_qcom_device_reset_ctrl(struct ufs_hba *hba, bool asserted)
 	gpiod_set_value_cansleep(host->device_reset, asserted);
 }
 
+static inline bool ufs_qcom_check_spec(struct ufs_hba *hba, u16 spec_version)
+{
+	return hba->dev_info.wspecversion == spec_version;
+}
+
 static int ufs_qcom_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op,
 	enum ufs_notify_change_status status)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 	int err = 0;
 
-	if (status == PRE_CHANGE)
+	if (status == PRE_CHANGE) {
+#if defined(CONFIG_UFSHID_YMTC)
+		if (ufs_qcom_check_spec(hba, 0x0220) &&
+			  hba->dev_quirks & UFS_DEVICE_QUIRK_YMTC_HID) {
+			ufsf_yhid_suspend(&host->hid, pm_op == UFS_SYSTEM_PM);
+		}
+#endif
+#if defined(CONFIG_UFSHID_FLASTOR)
+		if (ufs_qcom_check_spec(hba, 0x0220) &&
+			  hba->dev_quirks & UFS_DEVICE_QUIRK_FLASTOR_HID) {
+			ufsf_fhid_suspend(&host->f_hid, pm_op == UFS_SYSTEM_PM);
+		}
+#endif
+
 		return 0;
+	}
 
 	/*
 	 * If UniPro link is not active or OFF, PHY ref_clk, main PHY analog
@@ -1713,6 +1744,21 @@ static int ufs_qcom_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 	int err;
+
+#if defined(CONFIG_UFSHID_YMTC)
+	if (ufs_qcom_check_spec(hba, 0x0220) &&
+		  hba->dev_quirks & UFS_DEVICE_QUIRK_YMTC_HID) {
+		struct ufshid_ymtc_info *hid_info = &host->hid;
+		schedule_work(&hid_info->resume_work);
+	}
+#endif
+#if defined(CONFIG_UFSHID_FLASTOR)
+	if (ufs_qcom_check_spec(hba, 0x0220) &&
+		  hba->dev_quirks & UFS_DEVICE_QUIRK_FLASTOR_HID) {
+		struct ufshid_flastor_info *hid_info = &host->f_hid;
+		schedule_work(&hid_info->resume_work);
+	}
+#endif
 
 	if (host->vddp_ref_clk && (hba->rpm_lvl > UFS_PM_LVL_3 ||
 				   hba->spm_lvl > UFS_PM_LVL_3))
@@ -2507,7 +2553,6 @@ static void ufs_qcom_set_caps(struct ufs_hba *hba)
 	if (!host->disable_lpm) {
 		hba->caps |= UFSHCD_CAP_CLK_GATING |
 		UFSHCD_CAP_HIBERN8_WITH_CLK_GATING |
-		UFSHCD_CAP_CLK_SCALING |
 		UFSHCD_CAP_WB_WITH_CLK_SCALING |
 		UFSHCD_CAP_AUTO_BKOPS_SUSPEND;
 		if (!host->disable_wb_support)
@@ -2818,7 +2863,112 @@ static void ufs_qcom_save_host_ptr(struct ufs_hba *hba)
 	else
 		ufs_qcom_msg(ERR, hba->dev, "invalid host index %d\n", id);
 }
+/*feature-memorymonitor-v001-1-begin*/
+static int monitor_verify_command(unsigned char *cmd)
+{
+    if (cmd[0] != 0x3B && cmd[0] != 0x3C && cmd[0] != 0xC0)
+        return false;
 
+    return true;
+}
+
+/**
+ * ufs_ioctl_monitor - special cmd for memory monitor
+ * @hba: per-adapter instance
+ * @buf_user: user space buffer for ioctl data
+ * @return: 0 for success negative error code otherwise
+ *
+ */
+int ufs_ioctl_monitor(struct scsi_device *dev, void __user *buf_user)
+{
+	struct scsi_disk *sdp = (struct scsi_disk *)dev_get_drvdata(&dev->sdev_gendev);
+	struct request_queue *q = dev->request_queue;
+	struct gendisk *disk = sdp->disk;
+	struct request *rq;
+	struct scsi_request *req;
+	struct scsi_ioctl_command __user *sic = (struct scsi_ioctl_command __user *)buf_user;
+	int err;
+	unsigned int in_len, out_len, bytes, opcode, cmdlen;
+	char *buffer = NULL;
+
+	/*
+	 * get in an out lengths, verify they don't exceed a page worth of data
+	 */
+	if (get_user(in_len, &sic->inlen))
+		return -EFAULT;
+	if (get_user(out_len, &sic->outlen))
+		return -EFAULT;
+	if (in_len > PAGE_SIZE || out_len > PAGE_SIZE)
+		return -EINVAL;
+	if (get_user(opcode, sic->data))
+		return -EFAULT;
+
+	bytes = max(in_len, out_len);
+	if (bytes) {
+		buffer = kzalloc(bytes, GFP_NOIO | GFP_USER| __GFP_NOWARN);
+		if (!buffer)
+			return -ENOMEM;
+
+	}
+
+	rq = blk_get_request(q, in_len ? REQ_OP_DRV_OUT : REQ_OP_DRV_IN, 0);
+	if (IS_ERR(rq)) {
+		err = PTR_ERR(rq);
+		goto error_free_buffer;
+	}
+	req = scsi_req(rq);
+
+	cmdlen = COMMAND_SIZE(opcode);
+	if (((VENDOR_SPECIFIC_CDB == opcode) && (0 == strncmp(dev->vendor, "SAMSUNG ", 8))) || ((READ_BUFFER == opcode) && (0 == strncmp(dev->vendor, "YMTC ", 5))))
+		cmdlen = 16;
+
+	/*
+	 * get command and data to send to device, if any
+	 */
+	err = -EFAULT;
+	req->cmd_len = cmdlen;
+	if (copy_from_user(req->cmd, sic->data, cmdlen))
+		goto error;
+
+	if (in_len && copy_from_user(buffer, sic->data + cmdlen, in_len))
+		goto error;
+
+	if (!monitor_verify_command(req->cmd))
+		goto error;
+
+	/* default.  possible overriden later */
+	req->retries = 5;
+
+	if (bytes) {
+		err = blk_rq_map_kern(q, rq, buffer, bytes, GFP_NOIO);
+		if (err)
+			goto error;
+	}
+	blk_execute_rq(disk, rq, 0);
+
+#define OMAX_SB_LEN 16          /* For backward compatibility */
+	err = req->result & 0xff;	/* only 8 bit SCSI status */
+	if (err) {
+		if (req->sense_len && req->sense) {
+			bytes = (OMAX_SB_LEN > req->sense_len) ?
+				req->sense_len : OMAX_SB_LEN;
+			if (copy_to_user(sic->data, req->sense, bytes))
+				err = -EFAULT;
+		}
+	} else {
+		if (copy_to_user(sic->data, buffer, out_len))
+			err = -EFAULT;
+	}
+
+error:
+	blk_put_request(rq);
+
+error_free_buffer:
+	kfree(buffer);
+
+	return err;
+}
+/*feature-memorymonitor-v001-1-end*/
 /**
  * ufs_qcom_query_ioctl - perform user read queries
  * @hba: per-adapter instance
@@ -2867,6 +3017,9 @@ ufs_qcom_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 		case QUERY_DESC_IDN_INTERCONNECT:
 		case QUERY_DESC_IDN_GEOMETRY:
 		case QUERY_DESC_IDN_POWER:
+                /*feature-memorymonitor-v001-2-begin*/
+		case QUERY_DESC_IDN_HEALTH:
+                /*feature-memorymonitor-v001-2-end*/
 			index = 0;
 			break;
 		case QUERY_DESC_IDN_UNIT:
@@ -3060,6 +3213,13 @@ ufs_qcom_ioctl(struct scsi_device *dev, unsigned int cmd, void __user *buffer)
 					   buffer);
 		ufshcd_rpm_put_sync(hba);
 		break;
+        /*feature-memorymonitor-v001-3-begin*/
+	case UFS_IOCTL_MONITOR:
+		pm_runtime_get_sync(hba->dev);
+		err = ufs_ioctl_monitor(dev, buffer);
+		pm_runtime_put_sync(hba->dev);
+		break;
+        /*feature-memorymonitor-v001-3-end*/
 	default:
 		err = -ENOIOCTLCMD;
 		ufs_qcom_msg(DBG, hba->dev, "%s: Unsupported ioctl cmd %d\n", __func__,
@@ -3499,6 +3659,196 @@ struct thermal_cooling_device_ops ufs_thermal_ops = {
 	.set_cur_state = ufs_qcom_set_cur_therm_state,
 };
 
+static void ufshcd_lrb_scsicmd_time_statistics(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
+{
+	if (lrbp->cmd->cmnd[0] == WRITE_10 || lrbp->cmd->cmnd[0] == WRITE_16) {
+		if (hba->pwr_info.gear_tx == 1) {
+			ufs_transmission_status.gear_min_write_sec += blk_rq_sectors(scsi_cmd_to_rq(lrbp->cmd));
+			ufs_transmission_status.gear_min_write_us +=
+				ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+		}
+
+		if (hba->pwr_info.gear_tx == 3 || hba->pwr_info.gear_tx == 4) {
+			ufs_transmission_status.gear_max_write_sec += blk_rq_sectors(scsi_cmd_to_rq(lrbp->cmd));
+			ufs_transmission_status.gear_max_write_us +=
+				ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+		}
+	} else if (lrbp->cmd->cmnd[0] == READ_10 || lrbp->cmd->cmnd[0] == READ_16) {
+		if (hba->pwr_info.gear_rx == 1) {
+			ufs_transmission_status.gear_min_read_sec += blk_rq_sectors(scsi_cmd_to_rq(lrbp->cmd));
+			ufs_transmission_status.gear_min_read_us +=
+				ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+		}
+
+		if (hba->pwr_info.gear_rx == 3 || hba->pwr_info.gear_rx == 4) {
+			ufs_transmission_status.gear_max_read_sec += blk_rq_sectors(scsi_cmd_to_rq(lrbp->cmd));
+			ufs_transmission_status.gear_max_read_us +=
+				ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+		}
+	} else {
+		if (hba->pwr_info.gear_rx == 1) {
+			ufs_transmission_status.gear_min_other_sec += blk_rq_sectors(scsi_cmd_to_rq(lrbp->cmd));
+			ufs_transmission_status.gear_min_other_us += ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+		}
+
+		if (hba->pwr_info.gear_rx == 3 || hba->pwr_info.gear_rx == 4) {
+			ufs_transmission_status.gear_max_other_sec += blk_rq_sectors(scsi_cmd_to_rq(lrbp->cmd));
+			ufs_transmission_status.gear_max_other_us += ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+		}
+	}
+
+	return;
+}
+
+static void ufshcd_lrb_devcmd_time_statistics(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
+{
+	if (hba->pwr_info.gear_tx == 1) {
+		ufs_transmission_status.gear_min_dev_us +=
+			ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+	}
+
+	if (hba->pwr_info.gear_tx == 3 || hba->pwr_info.gear_tx == 4) {
+		ufs_transmission_status.gear_max_dev_us +=
+			ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+	}
+}
+
+void ufs_send_cmd_handle(void *data, struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
+{
+	if (ufs_transmission_status.transmission_status_enable) {
+		if(lrbp->cmd) {
+			ufs_transmission_status.scsi_send_count++;
+		} else {
+			ufs_transmission_status.dev_cmd_count++;
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(ufs_send_cmd_handle);
+
+void ufs_compl_cmd_handle(void *data, struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
+{
+	if (lrbp->cmd) {
+		if (ufs_transmission_status.transmission_status_enable) {
+			lrbp->compl_time_stamp = ktime_get();
+			ufshcd_lrb_scsicmd_time_statistics(hba, lrbp);
+		}
+	} else if (lrbp->command_type == UTP_CMD_TYPE_DEV_MANAGE ||
+			lrbp->command_type == UTP_CMD_TYPE_UFS_STORAGE) {
+		if (ufs_transmission_status.transmission_status_enable) {
+			ufshcd_lrb_devcmd_time_statistics(hba, lrbp);
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(ufs_compl_cmd_handle);
+
+static int
+oplus_ufs_regist_tracepoint(void)
+{
+	int rc;
+	printk("oplus ufs trace point init");
+	rc = register_trace_android_vh_ufs_send_command(ufs_send_cmd_handle, NULL);
+	if (rc != 0)
+		pr_err("register_trace_android_vh_ufs_send_command failed! rc=%d\n", rc);
+
+	rc = register_trace_android_vh_ufs_compl_command(ufs_compl_cmd_handle, NULL);
+	if (rc != 0)
+		pr_err("register_trace_android_vh_ufs_compl_command failed! rc=%d\n", rc);
+
+	return rc;
+}
+
+static ssize_t ufshcd_transmission_status_data_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE,
+					"transmission_status_enable:%u\n"
+					"gear_min_write_sec:%llu\n"
+					"gear_max_write_sec:%llu\n"
+					"gear_min_read_sec:%llu\n"
+					"gear_max_read_sec:%llu\n"
+					"gear_min_write_us:%llu\n"
+					"gear_max_write_us:%llu\n"
+					"gear_min_read_us:%llu\n"
+					"gear_max_read_us:%llu\n"
+					"gear_min_dev_us:%llu\n"
+					"gear_max_dev_us:%llu\n"
+					"gear_min_other_sec:%llu\n"
+					"gear_max_other_sec:%llu\n"
+					"gear_min_other_us:%llu\n"
+					"gear_max_other_us:%llu\n"
+					"scsi_send_count:%llu\n"
+					"dev_cmd_count:%llu\n"
+					"active_count:%llu\n"
+					"active_time:%llu\n"
+					"sleep_count:%llu\n"
+					"sleep_time:%llu\n"
+					"powerdown_count:%llu\n"
+					"powerdown_time:%llu\n"
+					"power_total_count:%llu\n"
+					"current_pwr_mode:%u\n",
+					ufs_transmission_status.transmission_status_enable,
+					ufs_transmission_status.gear_min_write_sec,
+					ufs_transmission_status.gear_max_write_sec,
+					ufs_transmission_status.gear_min_read_sec,
+					ufs_transmission_status.gear_max_read_sec,
+					ufs_transmission_status.gear_min_write_us,
+					ufs_transmission_status.gear_max_write_us,
+					ufs_transmission_status.gear_min_read_us,
+					ufs_transmission_status.gear_max_read_us,
+					ufs_transmission_status.gear_min_dev_us,
+					ufs_transmission_status.gear_max_dev_us,
+					ufs_transmission_status.gear_min_other_sec,
+					ufs_transmission_status.gear_max_other_sec,
+					ufs_transmission_status.gear_min_other_us,
+					ufs_transmission_status.gear_max_other_us,
+					ufs_transmission_status.scsi_send_count,
+					ufs_transmission_status.dev_cmd_count,
+					ufs_transmission_status.active_count,
+					ufs_transmission_status.active_time,
+					ufs_transmission_status.sleep_count,
+					ufs_transmission_status.sleep_time,
+					ufs_transmission_status.powerdown_count,
+					ufs_transmission_status.powerdown_time,
+					ufs_transmission_status.power_total_count,
+					ufs_transmission_status.current_pwr_mode);
+}
+
+static ssize_t ufshcd_transmission_status_data_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	u32 value;
+
+	if (kstrtou32(buf, 0, &value))
+		return -EINVAL;
+
+	value = !!value;
+
+	if (value) {
+		ufs_transmission_status.transmission_status_enable = 1;
+	} else {
+		ufs_transmission_status.transmission_status_enable = 0;
+		memset(&ufs_transmission_status, 0, sizeof(struct ufs_transmission_status_t));
+	}
+
+	return count;
+}
+
+static void ufshcd_transmission_status_init_sysfs(struct ufs_hba *hba)
+{
+	printk("tianwen: ufshcd_transmission_status_init_sysfs start\n");
+	ufs_transmission_status_attr.show = ufshcd_transmission_status_data_show;
+	ufs_transmission_status_attr.store = ufshcd_transmission_status_data_store;
+	sysfs_attr_init(&ufs_transmission_status_attr.attr);
+	ufs_transmission_status_attr.attr.name = "ufs_transmission_status";
+	ufs_transmission_status_attr.attr.mode = 0644;
+	if (device_create_file(hba->dev, &ufs_transmission_status_attr))
+		dev_err(hba->dev, "Failed to create sysfs for ufs_transmission_status_attr\n");
+
+	/*init the struct ufs_transmission_status*/
+	memset(&ufs_transmission_status, 0, sizeof(struct ufs_transmission_status_t));
+	ufs_transmission_status.transmission_status_enable = 1;
+}
+
 /* Static Algorithm */
 static int ufs_qcom_config_alg1(struct ufs_hba *hba)
 {
@@ -3706,6 +4056,307 @@ static void ufs_qcom_setup_max_hs_gear(struct ufs_qcom_host *host)
 	}
 }
 
+//#ifdef OPLUS_UFS_SIGNAL_QUALITY
+/*feature-flashaging806-v001-2-begin*/
+
+void recordUniproErr(
+	struct unipro_signal_quality_ctrl *signalCtrl,
+	u32 reg,
+	enum ufs_event_type type
+) {
+	unsigned long err_bits;
+	int ec;
+	struct signal_quality *rec = &signalCtrl->record;
+	switch (type)
+	{
+	case UFS_EVT_FATAL_ERR:
+		if (DEVICE_FATAL_ERROR & reg)
+			rec->ufs_device_err_cnt++;
+		if (CONTROLLER_FATAL_ERROR & reg)
+			rec->ufs_host_err_cnt++;
+		if (SYSTEM_BUS_FATAL_ERROR & reg)
+			rec->ufs_bus_err_cnt++;
+		if (CRYPTO_ENGINE_FATAL_ERROR & reg)
+			rec->ufs_crypto_err_cnt++;
+		break;
+	case UFS_EVT_LINK_STARTUP_FAIL:
+		if (UIC_LINK_LOST & reg)
+			rec->ufs_link_lost_cnt++;
+		break;
+	case UFS_EVT_PA_ERR:
+		err_bits = reg & UIC_PHY_ADAPTER_LAYER_ERROR_CODE_MASK;
+		for_each_set_bit(ec, &err_bits, UNIPRO_PA_ERR_MAX) {
+			rec->unipro_PA_err_total_cnt++;
+			rec->unipro_PA_err_cnt[ec]++;
+		}
+		break;
+	case UFS_EVT_DL_ERR:
+		err_bits = reg & UIC_DATA_LINK_LAYER_ERROR_CODE_MASK;
+		for_each_set_bit(ec, &err_bits, UNIPRO_DL_ERR_MAX) {
+			rec->unipro_DL_err_total_cnt++;
+			rec->unipro_DL_err_cnt[ec]++;
+		}
+		break;
+	case UFS_EVT_NL_ERR:
+		err_bits = reg & UIC_NETWORK_LAYER_ERROR_CODE_MASK;
+		for_each_set_bit(ec, &err_bits, UNIPRO_NL_ERR_MAX) {
+			rec->unipro_NL_err_total_cnt++;
+			rec->unipro_NL_err_cnt[ec]++;
+		}
+		break;
+	case UFS_EVT_TL_ERR:
+		err_bits = reg & UIC_TRANSPORT_LAYER_ERROR_CODE_MASK;
+		for_each_set_bit(ec, &err_bits, UNIPRO_TL_ERR_MAX) {
+			rec->unipro_TL_err_total_cnt++;
+			rec->unipro_TL_err_cnt[ec]++;
+		}
+		break;
+	case UFS_EVT_DME_ERR:
+		err_bits = reg & UIC_DME_ERROR_CODE_MASK;
+		for_each_set_bit(ec, &err_bits, UNIPRO_DME_ERR_MAX) {
+			rec->unipro_DME_err_total_cnt++;
+			rec->unipro_DME_err_cnt[ec]++;
+		}
+		break;
+	case UFS_EVT_ABORT:
+		rec->task_abort_cnt++;
+		break;
+	case UFS_EVT_HOST_RESET:
+		rec->host_reset_cnt++;
+		break;
+	case UFS_EVT_DEV_RESET:
+		rec->dev_reset_cnt++;
+		break;
+	default:
+		break;
+	}
+}
+
+#define SEQ_EASY_PRINT(x)   seq_printf(s, #x"\t%d\n", signalCtrl->record.x)
+#define SEQ_PA_PRINT(x)     \
+	seq_printf(s, #x"\t%d\n", signalCtrl->record.unipro_PA_err_cnt[x])
+#define SEQ_DL_PRINT(x)     \
+	seq_printf(s, #x"\t%d\n", signalCtrl->record.unipro_DL_err_cnt[x])
+#define SEQ_NL_PRINT(x)     \
+	seq_printf(s, #x"\t%d\n", signalCtrl->record.unipro_NL_err_cnt[x])
+#define SEQ_TL_PRINT(x)     \
+	seq_printf(s, #x"\t%d\n", signalCtrl->record.unipro_TL_err_cnt[x])
+#define SEQ_DME_PRINT(x)    \
+	seq_printf(s, #x"\t%d\n", signalCtrl->record.unipro_DME_err_cnt[x])
+#define SEQ_GEAR_PRINT(x)  \
+	seq_printf(s, #x"\t%d\n", signalCtrl->record.gear_err_cnt[x])
+
+static int record_read_func(struct seq_file *s, void *v)
+{
+	struct unipro_signal_quality_ctrl *signalCtrl =
+		(struct unipro_signal_quality_ctrl *)(s->private);
+	if (!signalCtrl)
+		return -EINVAL;
+	SEQ_EASY_PRINT(ufs_device_err_cnt);
+	SEQ_EASY_PRINT(ufs_host_err_cnt);
+	SEQ_EASY_PRINT(ufs_bus_err_cnt);
+	SEQ_EASY_PRINT(ufs_crypto_err_cnt);
+	SEQ_EASY_PRINT(ufs_link_lost_cnt);
+	SEQ_EASY_PRINT(task_abort_cnt);
+	SEQ_EASY_PRINT(host_reset_cnt);
+	SEQ_EASY_PRINT(dev_reset_cnt);
+	SEQ_EASY_PRINT(unipro_PA_err_total_cnt);
+	SEQ_PA_PRINT(UNIPRO_PA_LANE0_ERR_CNT);
+	SEQ_PA_PRINT(UNIPRO_PA_LANE1_ERR_CNT);
+	SEQ_PA_PRINT(UNIPRO_PA_LANE2_ERR_CNT);
+	SEQ_PA_PRINT(UNIPRO_PA_LANE3_ERR_CNT);
+	SEQ_PA_PRINT(UNIPRO_PA_LINE_RESET);
+	SEQ_EASY_PRINT(unipro_DL_err_total_cnt);
+	SEQ_DL_PRINT(UNIPRO_DL_NAC_RECEIVED);
+	SEQ_DL_PRINT(UNIPRO_DL_TCX_REPLAY_TIMER_EXPIRED);
+	SEQ_DL_PRINT(UNIPRO_DL_AFCX_REQUEST_TIMER_EXPIRED);
+	SEQ_DL_PRINT(UNIPRO_DL_FCX_PROTECTION_TIMER_EXPIRED);
+	SEQ_DL_PRINT(UNIPRO_DL_CRC_ERROR);
+	SEQ_DL_PRINT(UNIPRO_DL_RX_BUFFER_OVERFLOW);
+	SEQ_DL_PRINT(UNIPRO_DL_MAX_FRAME_LENGTH_EXCEEDED);
+	SEQ_DL_PRINT(UNIPRO_DL_WRONG_SEQUENCE_NUMBER);
+	SEQ_DL_PRINT(UNIPRO_DL_AFC_FRAME_SYNTAX_ERROR);
+	SEQ_DL_PRINT(UNIPRO_DL_NAC_FRAME_SYNTAX_ERROR);
+	SEQ_DL_PRINT(UNIPRO_DL_EOF_SYNTAX_ERROR);
+	SEQ_DL_PRINT(UNIPRO_DL_FRAME_SYNTAX_ERROR);
+	SEQ_DL_PRINT(UNIPRO_DL_BAD_CTRL_SYMBOL_TYPE);
+	SEQ_DL_PRINT(UNIPRO_DL_PA_INIT_ERROR);
+	SEQ_DL_PRINT(UNIPRO_DL_PA_ERROR_IND_RECEIVED);
+	SEQ_DL_PRINT(UNIPRO_DL_PA_INIT);
+	SEQ_EASY_PRINT(unipro_NL_err_total_cnt);
+	SEQ_NL_PRINT(UNIPRO_NL_UNSUPPORTED_HEADER_TYPE);
+	SEQ_NL_PRINT(UNIPRO_NL_BAD_DEVICEID_ENC);
+	SEQ_NL_PRINT(UNIPRO_NL_LHDR_TRAP_PACKET_DROPPING);
+	SEQ_EASY_PRINT(unipro_TL_err_total_cnt);
+	SEQ_TL_PRINT(UNIPRO_TL_UNSUPPORTED_HEADER_TYPE);
+	SEQ_TL_PRINT(UNIPRO_TL_UNKNOWN_CPORTID);
+	SEQ_TL_PRINT(UNIPRO_TL_NO_CONNECTION_RX);
+	SEQ_TL_PRINT(UNIPRO_TL_CONTROLLED_SEGMENT_DROPPING);
+	SEQ_TL_PRINT(UNIPRO_TL_BAD_TC);
+	SEQ_TL_PRINT(UNIPRO_TL_E2E_CREDIT_OVERFLOW);
+	SEQ_TL_PRINT(UNIPRO_TL_SAFETY_VALVE_DROPPING);
+	SEQ_EASY_PRINT(unipro_DME_err_total_cnt);
+	SEQ_DME_PRINT(UNIPRO_DME_GENERIC);
+	SEQ_DME_PRINT(UNIPRO_DME_TX_QOS);
+	SEQ_DME_PRINT(UNIPRO_DME_RX_QOS);
+	SEQ_DME_PRINT(UNIPRO_DME_PA_INIT_QOS);
+	SEQ_GEAR_PRINT(UFS_HS_G1);
+	SEQ_GEAR_PRINT(UFS_HS_G2);
+	SEQ_GEAR_PRINT(UFS_HS_G3);
+	SEQ_GEAR_PRINT(UFS_HS_G4);
+	SEQ_GEAR_PRINT(UFS_HS_G5);
+	return 0;
+}
+
+static int record_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, record_read_func, PDE_DATA(inode));
+}
+
+static const struct proc_ops record_fops = {
+	.proc_open = record_open,
+	.proc_read = seq_read,
+	.proc_release = single_release,
+};
+
+#define SEQ_UPLOAD_PRINT(x) \
+		seq_printf(s, #x": %d\n", signalCtrl->record.x \
+			-signalCtrl->record_upload.x);\
+		signalCtrl->record_upload.x = signalCtrl->record.x;
+#define SEQ_PA_UPLOAD_PRINT(x) \
+		seq_printf(s, #x": %d\n", signalCtrl->record.unipro_PA_err_cnt[x] \
+			-signalCtrl->record_upload.unipro_PA_err_cnt[x]);\
+		signalCtrl->record_upload.unipro_PA_err_cnt[x] = signalCtrl->record.unipro_PA_err_cnt[x];
+#define SEQ_DL_UPLOAD_PRINT(x) \
+			seq_printf(s, #x": %d\n", signalCtrl->record.unipro_DL_err_cnt[x] \
+				-signalCtrl->record_upload.unipro_DL_err_cnt[x]);\
+			signalCtrl->record_upload.unipro_DL_err_cnt[x] = signalCtrl->record.unipro_DL_err_cnt[x];
+#define SEQ_DL_UPLOAD_PRINT(x) \
+				seq_printf(s, #x": %d\n", signalCtrl->record.unipro_DL_err_cnt[x] \
+					-signalCtrl->record_upload.unipro_DL_err_cnt[x]);\
+				signalCtrl->record_upload.unipro_DL_err_cnt[x] = signalCtrl->record.unipro_DL_err_cnt[x];
+#define SEQ_NL_UPLOAD_PRINT(x) \
+					seq_printf(s, #x": %d\n", signalCtrl->record.unipro_NL_err_cnt[x] \
+						-signalCtrl->record_upload.unipro_NL_err_cnt[x]);\
+					signalCtrl->record_upload.unipro_NL_err_cnt[x] = signalCtrl->record.unipro_NL_err_cnt[x];
+#define SEQ_TL_UPLOAD_PRINT(x) \
+						seq_printf(s, #x": %d\n", signalCtrl->record.unipro_TL_err_cnt[x] \
+							-signalCtrl->record_upload.unipro_TL_err_cnt[x]);\
+						signalCtrl->record_upload.unipro_TL_err_cnt[x] = signalCtrl->record.unipro_TL_err_cnt[x];
+#define SEQ_DME_UPLOAD_PRINT(x) \
+							seq_printf(s, #x": %d\n", signalCtrl->record.unipro_DME_err_cnt[x] \
+								-signalCtrl->record_upload.unipro_DME_err_cnt[x]);\
+							signalCtrl->record_upload.unipro_DME_err_cnt[x] = signalCtrl->record.unipro_DME_err_cnt[x];
+#define SEQ_GEAR_UPLOAD_PRINT(x) \
+							seq_printf(s, #x": %d\n", signalCtrl->record.gear_err_cnt[x] \
+								-signalCtrl->record_upload.gear_err_cnt[x]);\
+							signalCtrl->record_upload.gear_err_cnt[x] = signalCtrl->record.gear_err_cnt[x];
+
+static int record_upload_read_func(struct seq_file *s, void *v)
+{
+	struct unipro_signal_quality_ctrl *signalCtrl =
+		(struct unipro_signal_quality_ctrl *)(s->private);
+	if (!signalCtrl)
+		return -EINVAL;
+	SEQ_UPLOAD_PRINT(ufs_device_err_cnt);
+	SEQ_UPLOAD_PRINT(ufs_host_err_cnt);
+	SEQ_UPLOAD_PRINT(ufs_bus_err_cnt);
+	SEQ_UPLOAD_PRINT(ufs_crypto_err_cnt);
+	SEQ_UPLOAD_PRINT(ufs_link_lost_cnt);
+	SEQ_UPLOAD_PRINT(task_abort_cnt);
+	SEQ_UPLOAD_PRINT(host_reset_cnt);
+	SEQ_UPLOAD_PRINT(dev_reset_cnt);
+	SEQ_UPLOAD_PRINT(unipro_PA_err_total_cnt);
+	SEQ_UPLOAD_PRINT(unipro_DL_err_total_cnt);
+	SEQ_UPLOAD_PRINT(unipro_NL_err_total_cnt);
+	SEQ_UPLOAD_PRINT(unipro_TL_err_total_cnt);
+	SEQ_UPLOAD_PRINT(unipro_DME_err_total_cnt);
+
+	SEQ_PA_UPLOAD_PRINT(UNIPRO_PA_LANE0_ERR_CNT);
+	SEQ_PA_UPLOAD_PRINT(UNIPRO_PA_LANE1_ERR_CNT);
+	SEQ_PA_UPLOAD_PRINT(UNIPRO_PA_LANE2_ERR_CNT);
+	SEQ_PA_UPLOAD_PRINT(UNIPRO_PA_LANE3_ERR_CNT);
+	SEQ_PA_UPLOAD_PRINT(UNIPRO_PA_LINE_RESET);
+
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_NAC_RECEIVED);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_TCX_REPLAY_TIMER_EXPIRED);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_AFCX_REQUEST_TIMER_EXPIRED);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_FCX_PROTECTION_TIMER_EXPIRED);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_CRC_ERROR);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_RX_BUFFER_OVERFLOW);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_MAX_FRAME_LENGTH_EXCEEDED);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_WRONG_SEQUENCE_NUMBER);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_AFC_FRAME_SYNTAX_ERROR);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_NAC_FRAME_SYNTAX_ERROR);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_EOF_SYNTAX_ERROR);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_FRAME_SYNTAX_ERROR);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_BAD_CTRL_SYMBOL_TYPE);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_PA_INIT_ERROR);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_PA_ERROR_IND_RECEIVED);
+	SEQ_DL_UPLOAD_PRINT(UNIPRO_DL_PA_INIT);
+
+	SEQ_NL_UPLOAD_PRINT(UNIPRO_NL_UNSUPPORTED_HEADER_TYPE);
+	SEQ_NL_UPLOAD_PRINT(UNIPRO_NL_BAD_DEVICEID_ENC);
+	SEQ_NL_UPLOAD_PRINT(UNIPRO_NL_LHDR_TRAP_PACKET_DROPPING);
+
+	SEQ_TL_UPLOAD_PRINT(UNIPRO_TL_UNSUPPORTED_HEADER_TYPE);
+	SEQ_TL_UPLOAD_PRINT(UNIPRO_TL_UNKNOWN_CPORTID);
+	SEQ_TL_UPLOAD_PRINT(UNIPRO_TL_NO_CONNECTION_RX);
+	SEQ_TL_UPLOAD_PRINT(UNIPRO_TL_CONTROLLED_SEGMENT_DROPPING);
+	SEQ_TL_UPLOAD_PRINT(UNIPRO_TL_BAD_TC);
+	SEQ_TL_UPLOAD_PRINT(UNIPRO_TL_E2E_CREDIT_OVERFLOW);
+	SEQ_TL_UPLOAD_PRINT(UNIPRO_TL_SAFETY_VALVE_DROPPING);
+
+	SEQ_DME_UPLOAD_PRINT(UNIPRO_DME_GENERIC);
+	SEQ_DME_UPLOAD_PRINT(UNIPRO_DME_TX_QOS);
+	SEQ_DME_UPLOAD_PRINT(UNIPRO_DME_RX_QOS);
+	SEQ_DME_UPLOAD_PRINT(UNIPRO_DME_PA_INIT_QOS);
+
+	SEQ_GEAR_UPLOAD_PRINT(UFS_HS_G1);
+	SEQ_GEAR_UPLOAD_PRINT(UFS_HS_G2);
+	SEQ_GEAR_UPLOAD_PRINT(UFS_HS_G3);
+	SEQ_GEAR_UPLOAD_PRINT(UFS_HS_G4);
+	SEQ_GEAR_UPLOAD_PRINT(UFS_HS_G5);
+	return 0;
+}
+
+static int record_upload_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, record_upload_read_func, PDE_DATA(inode));
+}
+
+static const struct proc_ops record_upload_fops = {
+	.proc_open = record_upload_open,
+	.proc_read = seq_read,
+	.proc_release = single_release,
+};
+
+int create_signal_quality_proc(struct unipro_signal_quality_ctrl *signalCtrl)
+{
+	struct proc_dir_entry *d_entry;
+	signalCtrl->ctrl_dir = proc_mkdir("ufs_signalShow", NULL);
+	if (!signalCtrl->ctrl_dir)
+		return -ENOMEM;
+	d_entry = proc_create_data("record", S_IRUGO, signalCtrl->ctrl_dir,
+			&record_fops, signalCtrl);
+	if (!d_entry)
+		return -ENOMEM;
+	d_entry = proc_create_data("record_upload", S_IRUGO, signalCtrl->ctrl_dir,
+			&record_upload_fops, signalCtrl);
+	if (!d_entry)
+		return -ENOMEM;
+	return 0;
+}
+
+void remove_signal_quality_proc(struct unipro_signal_quality_ctrl *signalCtrl)
+{
+	if (signalCtrl->ctrl_dir) {
+		remove_proc_entry("record", signalCtrl->ctrl_dir);
+		remove_proc_entry("record_upload", signalCtrl->ctrl_dir);
+	}
+	return;
+}
+/*feature-flashaging806-v001-2-end*/
 static void ufs_qcom_register_minidump(uintptr_t vaddr, u64 size,
 					const char *buf_name, u64 id)
 {
@@ -4014,6 +4665,11 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 
 	ufs_qcom_init_sysfs(hba);
 
+        /*feature-flashaging806-v001-3-begin*/
+	oplus_ufs_regist_tracepoint();
+	ufshcd_transmission_status_init_sysfs(hba);
+	create_signal_quality_proc(&signalCtrl);
+        /*feature-flashaging806-v001-3-end*/
 	/* Provide SCSI host ioctl API */
 	hba->host->hostt->ioctl = (int (*)(struct scsi_device *, unsigned int,
 				   void __user *))ufs_qcom_ioctl;
@@ -4074,6 +4730,13 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 		if (err)
 			ufs_qcom_msg(WARN, dev, "Fail to register UFS panic notifier\n");
 	}
+
+#if defined(CONFIG_UFS_HAGC)
+	err = init_manual_gc_sysfs(hba);
+	if (err)
+		return err;
+	init_manual_gc(hba);
+#endif
 
 	goto out;
 
@@ -4490,6 +5153,17 @@ static void ufs_qcom_save_all_regs(struct ufs_qcom_host *host)
 
 }
 
+void recordGearErr(struct unipro_signal_quality_ctrl *signalCtrl, struct ufs_hba *hba)
+{
+	struct ufs_pa_layer_attr *pwr_info = &hba->pwr_info;
+	u32 dev_gear = min_t(u32, pwr_info->gear_rx, pwr_info->gear_tx);
+
+	if (dev_gear > UFS_HS_G4)
+		return;
+
+	signalCtrl->record.gear_err_cnt[dev_gear]++;
+}
+
 static void ufs_qcom_event_notify(struct ufs_hba *hba,
 								  enum ufs_event_type evt,
 								  void *data)
@@ -4499,6 +5173,7 @@ static void ufs_qcom_event_notify(struct ufs_hba *hba,
 	u32 reg = *(u32 *)data;
 	bool ber_th_exceeded = false;
 	bool evt_valid = true;
+	recordGearErr(&signalCtrl, hba);
 
 	switch (evt) {
 	case UFS_EVT_PA_ERR:
@@ -4905,6 +5580,17 @@ static int ufs_qcom_device_reset(struct ufs_hba *hba)
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 	int ret = 0;
 
+#if defined(CONFIG_UFSHID_YMTC)
+	if (ufs_qcom_check_spec(hba, 0x0220) &&
+		  hba->dev_quirks & UFS_DEVICE_QUIRK_YMTC_HID)
+		ufsf_yhid_reset_host(&host->hid);
+#endif
+#if defined(CONFIG_UFSHID_FLASTOR)
+	if (ufs_qcom_check_spec(hba, 0x0220) &&
+		  hba->dev_quirks & UFS_DEVICE_QUIRK_FLASTOR_HID)
+		ufsf_fhid_reset_host(&host->f_hid);
+#endif
+
 	/* Reset UFS Host Controller and PHY */
 	ret = ufs_qcom_host_reset(hba);
 	if (ret)
@@ -4964,14 +5650,34 @@ static struct ufs_dev_fix ufs_qcom_dev_fixups[] = {
 		UFS_DEVICE_QUIRK_HOST_PA_TACTIVATE),
 	UFS_FIX(UFS_VENDOR_TOSHIBA, UFS_ANY_MODEL,
 		UFS_DEVICE_QUIRK_DELAY_AFTER_LPM),
+#if defined(CONFIG_UFSHID_YMTC)
+	/* todo: specify model */
+	UFS_FIX(UFS_VENDOR_YMTC, UFS_ANY_MODEL,
+		UFS_DEVICE_QUIRK_YMTC_HID),
+#endif
+#if defined(CONFIG_UFSHID_FLASTOR)
+	/* todo: specify model */
+	UFS_FIX(UFS_VENDOR_FLASTOR, UFS_ANY_MODEL,
+		UFS_DEVICE_QUIRK_FLASTOR_HID),
+#endif
 	END_FIX
 };
 
 static void ufs_qcom_fixup_dev_quirks(struct ufs_hba *hba)
 {
 	ufshcd_fixup_dev_quirks(hba, ufs_qcom_dev_fixups);
+#if defined(CONFIG_UFSHID_YMTC)
+	if (ufs_qcom_check_spec(hba, 0x0220) &&
+		  hba->dev_quirks & UFS_DEVICE_QUIRK_YMTC_HID)
+		ufsf_yhid_set_init_state(hba);
+#endif
+#if defined(CONFIG_UFSHID_FLASTOR)
+	if (ufs_qcom_check_spec(hba, 0x0220) &&
+		  hba->dev_quirks & UFS_DEVICE_QUIRK_FLASTOR_HID)
+		ufsf_fhid_set_init_state(hba);
+#endif
 }
-
+/*feature-flashaging806-v001-4-end*/
 /*
  * struct ufs_hba_qcom_vops - UFS QCOM specific variant operations
  *
@@ -5399,9 +6105,42 @@ static void ufs_qcom_hook_check_int_errors(void *param, struct ufs_hba *hba,
 	}
 }
 
+//Optimization.Storage.ufs 2023.11.7 add for /proc/devinfo/ufs
+/*feature-devinfo-v001-1-begin*/
+static int create_devinfo_ufs(struct scsi_device *sdev)
+{
+	static char temp_version[5] = {0};
+	static char vendor[9] = {0};
+	static char model[17] = {0};
+	int ret = 0;
+
+	pr_info("get ufs device vendor/model/rev\n");
+	WARN_ON(!sdev);
+	strncpy(temp_version, sdev->rev, 4);
+	strncpy(vendor, sdev->vendor, 8);
+	strncpy(model, sdev->model, 16);
+
+	ret = register_device_proc("ufs_version", temp_version, vendor);
+
+	if (ret) {
+		pr_err("%s create ufs_version fail, ret=%d",__func__,ret);
+		return ret;
+	}
+
+	ret = register_device_proc("ufs", model, vendor);
+
+	if (ret) {
+		pr_err("%s create ufs fail, ret=%d",__func__,ret);
+	}
+
+	return ret;
+}
+
+/*feature-devinfo-v001-1-end*/
 static void ufs_qcom_update_sdev(void *param, struct scsi_device *sdev)
 {
 	sdev->broken_fua = 1;
+	pr_info_once("%s ret=%d",__func__,create_devinfo_ufs(sdev));
 }
 
 static void ufs_qcom_hook_prepare_command(void *param, struct ufs_hba *hba,
@@ -5583,10 +6322,25 @@ static int ufs_qcom_remove(struct platform_device *pdev)
 		atomic_notifier_chain_unregister(&panic_notifier_list,
 				&host->ufs_qcom_panic_nb);
 
+#if defined(CONFIG_UFSHID_YMTC)
+	if (ufs_qcom_check_spec(hba, 0x0220) &&
+		  hba->dev_quirks & UFS_DEVICE_QUIRK_YMTC_HID) {
+		ufsf_yhid_remove(&host->hid);
+	}
+#endif
+#if defined(CONFIG_UFSHID_FLASTOR)
+	if (ufs_qcom_check_spec(hba, 0x0220) &&
+		  hba->dev_quirks & UFS_DEVICE_QUIRK_FLASTOR_HID) {
+		ufsf_fhid_remove(&host->f_hid);
+	}
+#endif
+
 	pm_runtime_get_sync(&(pdev)->dev);
 	for (i = 0; i < r->num_groups; i++, qcg++)
 		remove_group_qos(qcg);
-
+        /*feature-flashaging806-v001-6-begin*/
+	remove_signal_quality_proc(&signalCtrl);
+        /*feature-flashaging806-v001-6-end*/
 	ufshcd_remove(hba);
 	return 0;
 }

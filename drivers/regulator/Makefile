@@ -187,5 +187,9 @@ obj-$(CONFIG_REGULATOR_STUB) += stub-regulator.o
 obj-$(CONFIG_REGULATOR_DEBUG_CONTROL) += debug-regulator.o
 obj-$(CONFIG_REGULATOR_QTI_OCP_NOTIFIER) += qti-ocp-notifier.o
 obj-$(CONFIG_VIRTIO_REGULATOR) += virtio_regulator.o
+obj-$(CONFIG_FAN53870_LDO) +=  fan53870.o
+obj-$(CONFIG_REGULATOR_OPLUS_WL2868C) +=  oplus_camera_wl2868c.o
+obj-$(CONFIG_REGULATOR_AW37004) += aw37004-regulator.o
+obj-$(CONFIG_REGULATOR_WL2866D) += wl2866d-regulator.o
 
 ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG

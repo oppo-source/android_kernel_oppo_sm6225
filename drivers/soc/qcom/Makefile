@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
+CFLAGS_fsa4480-i2c.o += -I$(srctree)/drivers/power/oplus/pd_ext/inc \
+                        -I$(srctree)/drivers/power/oplus/v2/include
 CFLAGS_rpmh-rsc.o := -I$(src)
 obj-$(CONFIG_QCOM_AOSS_QMP) +=	qcom_aoss.o
 obj-$(CONFIG_QCOM_GENI_SE) +=	qcom-geni-se.o
@@ -21,6 +23,9 @@ obj-$(CONFIG_QCOM_SMD_RPM)	+= smd-rpm.o
 obj-$(CONFIG_QCOM_SMEM) +=	smem.o
 obj-$(CONFIG_MSM_SPM) += msm-spm.o spm_devices.o
 obj-$(CONFIG_QCOM_SMEM_STATE) += smem_state.o
+ifneq ($(CONFIG_OPLUS_SENSOR_WAKEUP_TRACE), n)
+CFLAGS_smp2p.o += -DOPLUS_FEATURE_SENSOR_WAKEUP_TRACE
+endif
 obj-$(CONFIG_QCOM_SMP2P)	+= smp2p.o
 obj-$(CONFIG_QCOM_SMSM)	+= smsm.o
 obj-$(CONFIG_QCOM_SMP2P_SLEEPSTATE) += smp2p_sleepstate.o

@@ -895,11 +895,193 @@ static const struct adc5_channels adc5_chans_pmic[ADC5_MAX_CHANNEL] = {
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
 	[ADC5_GPIO2_100K_PU]	= ADC5_CHAN_TEMP("gpio2_100k_pu", 0,
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
+#ifdef OPLUS_CHG_SEPARATE_MUSE_ADC
+	[ADC5_GPIO3_100K_PU]	= ADC5_CHAN_VOLT("gpio3_100k_pu", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_GPIO4_100K_PU]	= ADC5_CHAN_VOLT("gpio4_100k_pu", 1,
+					SCALE_HW_CALIB_DEFAULT)
+#else
 	[ADC5_GPIO3_100K_PU]	= ADC5_CHAN_TEMP("gpio3_100k_pu", 0,
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
 	[ADC5_GPIO4_100K_PU]	= ADC5_CHAN_TEMP("gpio4_100k_pu", 0,
 					SCALE_HW_CALIB_THERM_100K_PULLUP)
+#endif
 };
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static const struct adc5_channels adc5_chans_pmic_walle[ADC5_MAX_CHANNEL] = {
+	[ADC5_REF_GND]		= ADC5_CHAN_VOLT("ref_gnd", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_1P25VREF]		= ADC5_CHAN_VOLT("vref_1p25", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_VPH_PWR]		= ADC5_CHAN_VOLT("vph_pwr", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_VBAT_SNS]		= ADC5_CHAN_VOLT("vbat_sns", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_DIE_TEMP]		= ADC5_CHAN_TEMP("die_temp", 0,
+					SCALE_HW_CALIB_PMIC_THERM)
+	[ADC5_USB_IN_I]		= ADC5_CHAN_VOLT("usb_in_i_uv", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_USB_IN_V_16]	= ADC5_CHAN_VOLT("usb_in_v_div_16", 8,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_CHG_TEMP]		= ADC5_CHAN_TEMP("chg_temp", 0,
+					SCALE_HW_CALIB_PM5_CHG_TEMP)
+	/* Charger prescales SBUx and MID_CHG to fit within 1.8V upper unit */
+	[ADC5_SBUx]		= ADC5_CHAN_VOLT("chg_sbux", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_MID_CHG_DIV6]	= ADC5_CHAN_VOLT("chg_mid_chg", 3,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_XO_THERM_100K_PU]	= ADC5_CHAN_TEMP("xo_therm", 0,
+					SCALE_HW_CALIB_XOTHERM)
+	[ADC5_BAT_THERM_100K_PU]	= ADC5_CHAN_TEMP("bat_therm_100k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_100K)
+	[ADC5_BAT_THERM_30K_PU]	= ADC5_CHAN_TEMP("bat_therm_30k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_30K)
+	[ADC5_BAT_THERM_400K_PU]	= ADC5_CHAN_TEMP("bat_therm_400k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_400K)
+	[ADC5_BAT_ID_100K_PU]	= ADC5_CHAN_TEMP("bat_id", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_AMUX_THM1_100K_PU] = ADC5_CHAN_TEMP("amux_thm1_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM2_100K_PU] = ADC5_CHAN_TEMP("amux_thm2_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM3_100K_PU] = ADC5_CHAN_TEMP("amux_thm3_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM4_100K_PU] = ADC5_CHAN_TEMP("amux_thm4_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM2]	= ADC5_CHAN_TEMP("amux_thm2", 0,
+					SCALE_HW_CALIB_PM5_SMB_TEMP)
+	[ADC5_PARALLEL_ISENSE]	= ADC5_CHAN_VOLT("parallel_isense", 0,
+					SCALE_HW_CALIB_PM5_CUR)
+	[ADC5_GPIO1_100K_PU]	= ADC5_CHAN_TEMP("gpio1_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_GPIO2_100K_PU]	= ADC5_CHAN_TEMP("gpio2_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_GPIO3_100K_PU]	= ADC5_CHAN_VOLT("gpio3_100k_pu", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_GPIO4_100K_PU]	= ADC5_CHAN_TEMP("gpio4_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+};
+
+static const struct adc5_channels adc5_chans_pmic_ab4[ADC5_MAX_CHANNEL] = {
+	[ADC5_REF_GND]		= ADC5_CHAN_VOLT("ref_gnd", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_1P25VREF]		= ADC5_CHAN_VOLT("vref_1p25", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_VPH_PWR]		= ADC5_CHAN_VOLT("vph_pwr", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_VBAT_SNS]		= ADC5_CHAN_VOLT("vbat_sns", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_DIE_TEMP]		= ADC5_CHAN_TEMP("die_temp", 0,
+					SCALE_HW_CALIB_PMIC_THERM)
+	[ADC5_USB_IN_I]		= ADC5_CHAN_VOLT("usb_in_i_uv", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_USB_IN_V_16]	= ADC5_CHAN_VOLT("usb_in_v_div_16", 8,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_CHG_TEMP]		= ADC5_CHAN_TEMP("chg_temp", 0,
+					SCALE_HW_CALIB_PM5_CHG_TEMP)
+	/* Charger prescales SBUx and MID_CHG to fit within 1.8V upper unit */
+	[ADC5_SBUx]		= ADC5_CHAN_VOLT("chg_sbux", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_MID_CHG_DIV6]	= ADC5_CHAN_VOLT("chg_mid_chg", 3,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_XO_THERM_100K_PU]	= ADC5_CHAN_TEMP("xo_therm", 0,
+					SCALE_HW_CALIB_XOTHERM)
+	[ADC5_BAT_THERM_100K_PU]	= ADC5_CHAN_TEMP("bat_therm_100k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_100K)
+	[ADC5_BAT_THERM_30K_PU]	= ADC5_CHAN_TEMP("bat_therm_30k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_30K)
+	[ADC5_BAT_THERM_400K_PU]	= ADC5_CHAN_TEMP("bat_therm_400k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_400K)
+	[ADC5_BAT_ID_100K_PU]	= ADC5_CHAN_TEMP("bat_id", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_AMUX_THM1_100K_PU] = ADC5_CHAN_TEMP("amux_thm1_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM2_100K_PU] = ADC5_CHAN_TEMP("amux_thm2_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM3_100K_PU] = ADC5_CHAN_TEMP("amux_thm3_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM4_100K_PU] = ADC5_CHAN_TEMP("amux_thm4_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM2]	= ADC5_CHAN_TEMP("amux_thm2", 0,
+					SCALE_HW_CALIB_PM5_SMB_TEMP)
+	[ADC5_PARALLEL_ISENSE]	= ADC5_CHAN_VOLT("parallel_isense", 0,
+					SCALE_HW_CALIB_PM5_CUR)
+	[ADC5_GPIO1_100K_PU]	= ADC5_CHAN_TEMP("gpio1_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_GPIO2_100K_PU]	= ADC5_CHAN_TEMP("gpio2_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+#ifdef OPLUS_CHG_SEPARATE_MUSE_ADC
+	[ADC5_GPIO3_100K_PU]	= ADC5_CHAN_VOLT("gpio3_100k_pu", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_GPIO4_100K_PU]	= ADC5_CHAN_VOLT("gpio4_100k_pu", 1,
+					SCALE_HW_CALIB_DEFAULT)
+#else
+	[ADC5_GPIO3_100K_PU]	= ADC5_CHAN_TEMP("gpio3_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_GPIO4_100K_PU]	= ADC5_CHAN_VOLT("gpio4_100k_pu", 0,
+					SCALE_HW_CALIB_DEFAULT)
+#endif
+};
+
+static const struct adc5_channels adc5_chans_pmic_usbtemp_to_volt[ADC5_MAX_CHANNEL] = {
+	[ADC5_REF_GND]		= ADC5_CHAN_VOLT("ref_gnd", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_1P25VREF]		= ADC5_CHAN_VOLT("vref_1p25", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_VPH_PWR]		= ADC5_CHAN_VOLT("vph_pwr", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_VBAT_SNS]		= ADC5_CHAN_VOLT("vbat_sns", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_DIE_TEMP]		= ADC5_CHAN_TEMP("die_temp", 0,
+					SCALE_HW_CALIB_PMIC_THERM)
+	[ADC5_USB_IN_I]		= ADC5_CHAN_VOLT("usb_in_i_uv", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_USB_IN_V_16]	= ADC5_CHAN_VOLT("usb_in_v_div_16", 8,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_CHG_TEMP]		= ADC5_CHAN_TEMP("chg_temp", 0,
+					SCALE_HW_CALIB_PM5_CHG_TEMP)
+	/* Charger prescales SBUx and MID_CHG to fit within 1.8V upper unit */
+	[ADC5_SBUx]		= ADC5_CHAN_VOLT("chg_sbux", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_MID_CHG_DIV6]	= ADC5_CHAN_VOLT("chg_mid_chg", 3,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_XO_THERM_100K_PU]	= ADC5_CHAN_TEMP("xo_therm", 0,
+					SCALE_HW_CALIB_XOTHERM)
+	[ADC5_BAT_THERM_100K_PU]	= ADC5_CHAN_TEMP("bat_therm_100k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_100K)
+	[ADC5_BAT_THERM_30K_PU]	= ADC5_CHAN_TEMP("bat_therm_30k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_30K)
+	[ADC5_BAT_THERM_400K_PU]	= ADC5_CHAN_TEMP("bat_therm_400k_pu", 0,
+					SCALE_HW_CALIB_BATT_THERM_400K)
+	[ADC5_BAT_ID_100K_PU]	= ADC5_CHAN_TEMP("bat_id", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_AMUX_THM1_100K_PU] = ADC5_CHAN_TEMP("amux_thm1_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM2_100K_PU] = ADC5_CHAN_TEMP("amux_thm2_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM3_100K_PU] = ADC5_CHAN_TEMP("amux_thm3_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM4_100K_PU] = ADC5_CHAN_TEMP("amux_thm4_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+	[ADC5_AMUX_THM2]	= ADC5_CHAN_TEMP("amux_thm2", 0,
+					SCALE_HW_CALIB_PM5_SMB_TEMP)
+	[ADC5_PARALLEL_ISENSE]	= ADC5_CHAN_VOLT("parallel_isense", 0,
+					SCALE_HW_CALIB_PM5_CUR)
+/* #ifdef OPLUS_FEATURE_CHG_BASIC */
+	/* Charger prescales usbtemp_l and usbtemp_r to fit within voltage upper unit */
+	[ADC5_GPIO1_100K_PU]	= ADC5_CHAN_VOLT("gpio1_100k_pu", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC5_GPIO2_100K_PU]	= ADC5_CHAN_VOLT("gpio2_100k_pu", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	/* Charger prescales batt_id to fit within voltage upper unit */
+	[ADC5_GPIO3_100K_PU]	= ADC5_CHAN_VOLT("gpio3_100k_pu", 0,
+					SCALE_HW_CALIB_DEFAULT)
+/* #endif */
+	[ADC5_GPIO4_100K_PU]	= ADC5_CHAN_TEMP("gpio4_100k_pu", 0,
+					SCALE_HW_CALIB_THERM_100K_PULLUP)
+};
+#endif
 
 static const struct adc5_channels adc7_chans_pmic[ADC5_MAX_CHANNEL] = {
 	[ADC7_REF_GND]		= ADC5_CHAN_VOLT("ref_gnd", 0,
@@ -1183,6 +1365,56 @@ static const struct adc5_data adc5_data_pmic_rev2 = {
 				1, 2, 4, 8, 16, 32, 64, 128},
 };
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static const struct adc5_data adc5_data_pmic_walle = {
+	.name = "pm-adc5",
+	.full_scale_code_volt = 0x70e4,
+	.full_scale_code_cur = 0x2710,
+	.adc_chans = adc5_chans_pmic_walle,
+	.info = &adc5_info,
+	.decimation = (unsigned int [ADC5_DECIMATION_SAMPLES_MAX])
+				{250, 420, 840},
+	.hw_settle_1 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
+				{15, 100, 200, 300, 400, 500, 600, 700,
+				800, 900, 1, 2, 4, 6, 8, 10},
+	.hw_settle_2 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
+				{15, 100, 200, 300, 400, 500, 600, 700,
+				1, 2, 4, 8, 16, 32, 64, 128},
+};
+
+static const struct adc5_data adc5_data_pmic_ab4 = {
+	.name = "pm-adc5",
+	.full_scale_code_volt = 0x70e4,
+	.full_scale_code_cur = 0x2710,
+	.adc_chans = adc5_chans_pmic_ab4,
+	.info = &adc5_info,
+	.decimation = (unsigned int [ADC5_DECIMATION_SAMPLES_MAX])
+				{250, 420, 840},
+	.hw_settle_1 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
+				{15, 100, 200, 300, 400, 500, 600, 700,
+				800, 900, 1, 2, 4, 6, 8, 10},
+	.hw_settle_2 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
+				{15, 100, 200, 300, 400, 500, 600, 700,
+				1, 2, 4, 8, 16, 32, 64, 128},
+};
+
+static const struct adc5_data adc5_data_pmic_usbtemp_to_volt = {
+	.name = "pm-adc5",
+	.full_scale_code_volt = 0x70e4,
+	.full_scale_code_cur = 0x2710,
+	.adc_chans = adc5_chans_pmic_usbtemp_to_volt,
+	.info = &adc5_info,
+	.decimation = (unsigned int [ADC5_DECIMATION_SAMPLES_MAX])
+				{250, 420, 840},
+	.hw_settle_1 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
+				{15, 100, 200, 300, 400, 500, 600, 700,
+				800, 900, 1, 2, 4, 6, 8, 10},
+	.hw_settle_2 = (unsigned int [VADC_HW_SETTLE_SAMPLES_MAX])
+				{15, 100, 200, 300, 400, 500, 600, 700,
+				1, 2, 4, 8, 16, 32, 64, 128},
+};
+#endif
+
 static const struct of_device_id adc5_match_table[] = {
 	{
 		.compatible = "qcom,spmi-adc5",
@@ -1204,6 +1436,20 @@ static const struct of_device_id adc5_match_table[] = {
 		.compatible = "qcom,spmi-adc5-lite",
 		.data = &adc5_data_pmic5_lite,
 	},
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	{
+		.compatible = "qcom,spmi-adc5-walle",
+		.data = &adc5_data_pmic_walle,
+	},
+	{
+		.compatible = "qcom,spmi-adc5-ab4",
+		.data = &adc5_data_pmic_ab4,
+	},
+	{
+		.compatible = "qcom,spmi-adc5-usbtemp-to-volt",
+		.data = &adc5_data_pmic_usbtemp_to_volt,
+	},
+#endif
 	{ }
 };
 MODULE_DEVICE_TABLE(of, adc5_match_table);
@@ -1396,6 +1642,11 @@ static struct platform_driver adc5_driver = {
 	},
 	.probe = adc5_probe,
 };
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+MODULE_SOFTDEP("post: oplus_chg");
+#endif
+
 module_platform_driver(adc5_driver);
 
 MODULE_ALIAS("platform:qcom-spmi-adc5");

@@ -115,6 +115,17 @@ enum mmc_err_stat {
 	MMC_ERR_MAX,
 };
 
+#ifdef CONFIG_MMC_PASSWORDS
+struct mmc_sd_lock {
+#define MAX_UNLOCK_PASSWORD_WITH_BUF 20    	/* 1(len) + max_pwd(16) + 0xFF 0xFF + 0 = 20 */
+    bool swith_voltage;    /* whether sdcard voltage swith to 1.8v  */
+    bool auto_unlock;
+    u8 unlock_pwd[MAX_UNLOCK_PASSWORD_WITH_BUF];
+    int (*sysfs_add)(struct mmc_host *, struct mmc_card *card);
+    void (*sysfs_remove)(struct mmc_host *, struct mmc_card *card);
+};
+#endif
+
 struct mmc_host_ops {
 	/*
 	 * It is optional for the host to implement pre_req and post_req in
@@ -215,8 +226,11 @@ struct mmc_host_ops {
 
 	/* Initialize an SD express card, mandatory for MMC_CAP2_SD_EXP. */
 	int	(*init_sd_express)(struct mmc_host *host, struct mmc_ios *ios);
-
+#ifdef CONFIG_MMC_PASSWORDS
+	ANDROID_KABI_USE(1, int (*sd_lock_reset)(struct mmc_host *host));
+#else
 	ANDROID_KABI_RESERVE(1);
+#endif
 	ANDROID_KABI_RESERVE(2);
 };
 
@@ -533,7 +547,11 @@ struct mmc_host {
 
 	u32			err_stats[MMC_ERR_MAX];
 
+#ifdef CONFIG_MMC_PASSWORDS
+	ANDROID_KABI_USE(1, struct mmc_sd_lock *sdlock);
+#else
 	ANDROID_KABI_RESERVE(1);
+#endif
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_OEM_DATA(1);
 

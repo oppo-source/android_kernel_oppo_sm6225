@@ -1,0 +1,11 @@
+#
+# OCP2130 bias IC driver configuration
+#
+
+config OCP2130_BIAS
+	tristate "OCP2130 bias IC"
+	depends on I2C
+	default m
+	help
+	  Say Y here if you have OCP2130 bias IC.
+	  If unsure, say N.

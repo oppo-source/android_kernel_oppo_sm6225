@@ -1777,6 +1777,27 @@ ciu_out:
 	return ret;
 }
 
+//#ifdef CONFIG_MMC_PASSWORDS
+static int dw_mci_sd_lock_reset(struct mmc_host *mmc)
+{
+	struct dw_mci_slot *slot = mmc_priv(mmc);
+	struct dw_mci *host = slot->host;
+	const struct dw_mci_drv_data *drv_data = slot->host->drv_data;
+	u32 present = 0;
+
+	pm_runtime_get_sync(mmc_dev(mmc));
+	present = dw_mci_get_cd(mmc);
+	if (present == 1) {
+		 if (drv_data && drv_data->work_fail_reset)
+			drv_data->work_fail_reset(host);
+	}
+	pm_runtime_mark_last_busy(mmc_dev(mmc));
+	pm_runtime_put_autosuspend(mmc_dev(mmc));
+
+	return 0;
+}
+//#endif
+
 static const struct mmc_host_ops dw_mci_ops = {
 	.request		= dw_mci_request,
 	.pre_req		= dw_mci_pre_req,
@@ -1792,6 +1813,9 @@ static const struct mmc_host_ops dw_mci_ops = {
 	.start_signal_voltage_switch = dw_mci_switch_voltage,
 	.init_card		= dw_mci_init_card,
 	.prepare_hs400_tuning	= dw_mci_prepare_hs400_tuning,
+//#ifdef CONFIG_MMC_PASSWORDS
+	.sd_lock_reset		= dw_mci_sd_lock_reset,
+//#endif
 };
 
 #ifdef CONFIG_FAULT_INJECTION
@@ -3246,6 +3270,10 @@ int dw_mci_probe(struct dw_mci *host)
 	host->biu_clk = devm_clk_get(host->dev, "biu");
 	if (IS_ERR(host->biu_clk)) {
 		dev_dbg(host->dev, "biu clock not available\n");
+		ret = PTR_ERR(host->biu_clk);
+		if (ret == -EPROBE_DEFER)
+			return ret;
+
 	} else {
 		ret = clk_prepare_enable(host->biu_clk);
 		if (ret) {
@@ -3257,6 +3285,10 @@ int dw_mci_probe(struct dw_mci *host)
 	host->ciu_clk = devm_clk_get(host->dev, "ciu");
 	if (IS_ERR(host->ciu_clk)) {
 		dev_dbg(host->dev, "ciu clock not available\n");
+		ret = PTR_ERR(host->ciu_clk);
+		if (ret == -EPROBE_DEFER)
+			goto err_clk_biu;
+
 		host->bus_hz = host->pdata->bus_hz;
 	} else {
 		ret = clk_prepare_enable(host->ciu_clk);

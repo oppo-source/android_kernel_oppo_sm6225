@@ -9,6 +9,9 @@
 
 #include <trace/hooks/vendor_hooks.h>
 
+struct shrinker;
+struct shrink_control;
+
 DECLARE_RESTRICTED_HOOK(android_rvh_set_balance_anon_file_reclaim,
 			TP_PROTO(bool *balance_anon_file_reclaim),
 			TP_ARGS(balance_anon_file_reclaim), 1);
@@ -36,6 +39,9 @@ DECLARE_HOOK(android_vh_shrink_node_memcgs,
 DECLARE_HOOK(android_vh_tune_scan_type,
 	TP_PROTO(char *scan_type),
 	TP_ARGS(scan_type));
+DECLARE_RESTRICTED_HOOK(android_rvh_kswapd_shrink_node,
+			TP_PROTO(unsigned long *nr_reclaimed),
+			TP_ARGS(nr_reclaimed), 1);
 DECLARE_HOOK(android_vh_tune_swappiness,
 	TP_PROTO(int *swappiness),
 	TP_ARGS(swappiness));
@@ -58,6 +64,31 @@ DECLARE_HOOK(android_vh_vmscan_kswapd_done,
 	TP_PROTO(int node_id, unsigned int highest_zoneidx, unsigned int alloc_order,
 	        unsigned int reclaim_order),
 	TP_ARGS(node_id, highest_zoneidx, alloc_order, reclaim_order));
+DECLARE_HOOK(android_vh_shrink_page_list,
+	TP_PROTO(struct page *page, bool dirty, bool writeback,
+		bool *activate, bool *keep),
+	TP_ARGS(page, dirty, writeback, activate, keep));
+DECLARE_HOOK(android_vh_inode_lru_isolate,
+	TP_PROTO(struct inode *inode, bool *skip),
+	TP_ARGS(inode, skip));
+DECLARE_HOOK(android_vh_invalidate_mapping_pagevec,
+	TP_PROTO(struct address_space *mapping, bool *skip),
+	TP_ARGS(mapping, skip));
+DECLARE_HOOK(android_vh_keep_reclaimed_page,
+	TP_PROTO(struct page *page, int refcount, bool *keep),
+	TP_ARGS(page, refcount, keep));
+DECLARE_HOOK(android_vh_clear_reclaimed_page,
+	TP_PROTO(struct page *page, bool reclaimed),
+	TP_ARGS(page, reclaimed));
+DECLARE_HOOK(android_vh_evict_pages_bypass,
+	TP_PROTO(struct page *page, bool *bypass),
+	TP_ARGS(page, bypass));
+DECLARE_HOOK(android_vh_mglru_should_abort_scan,
+	TP_PROTO(unsigned long *nr_reclaimed),
+	TP_ARGS(nr_reclaimed));
+DECLARE_HOOK(android_vh_mglru_new_gen,
+	TP_PROTO(void *unused),
+	TP_ARGS(unused));
 #endif /* _TRACE_HOOK_VMSCAN_H */
 /* This part must be outside protection */
 #include <trace/define_trace.h>

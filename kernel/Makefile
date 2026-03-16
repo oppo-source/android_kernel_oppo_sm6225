@@ -132,6 +132,10 @@ obj-$(CONFIG_WATCH_QUEUE) += watch_queue.o
 obj-$(CONFIG_RESOURCE_KUNIT_TEST) += resource_kunit.o
 obj-$(CONFIG_SYSCTL_KUNIT_TEST) += sysctl-test.o
 
+#ifdef CONFIG_OPLUS_SCHED_TUNE
+obj-$(CONFIG_OPLUS_SCHED_TUNE) += oplus_cpu/sched/sched_tune/
+#endif /* CONFIG_OPLUS_SCHED_TUNE */
+
 CFLAGS_stackleak.o += $(DISABLE_STACKLEAK_PLUGIN)
 obj-$(CONFIG_GCC_PLUGIN_STACKLEAK) += stackleak.o
 KASAN_SANITIZE_stackleak.o := n
@@ -160,6 +164,15 @@ $(obj)/kheaders_data.tar.xz: FORCE
 
 clean-files := kheaders_data.tar.xz kheaders.md5
 
+#ifdef OPLUS_FEATURE_PERFORMANCE_SCHED
+obj-$(CONFIG_OPLUS_FEATURE_PERFORMANCE_SCHED) += oplus_cpu/sched/
+#endif /* OPLUS_FEATURE_PERFORMANCE_SCHED */
+#ifdef OPLUS_FEATURE_THERMAL_HORAE
+obj-$(CONFIG_HORAE_THERMAL_SHELL) += oplus_cpu/thermal/
+#endif /* OPLUS_FEATURE_THERMAL_HORAE */
+obj-$(CONFIG_UA_KERNEL_CPU_IOCTL) += oplus_cpu/uad/
+obj-$(CONFIG_OPLUS_FEATURE_OCH) += oplus_cpu/cpufreq_health/
+obj-$(CONFIG_OPLUS_OMRG) += oplus_cpu/oplus_omrg/
 #
 # ANDROID: GKI: Generate headerfiles required for gki_module.o
 #

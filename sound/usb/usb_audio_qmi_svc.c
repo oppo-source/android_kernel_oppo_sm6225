@@ -99,7 +99,6 @@ struct uaudio_dev {
 	unsigned int card_num;
 	unsigned int usb_core_id;
 	atomic_t in_use;
-	struct kref kref;
 	wait_queue_head_t disconnect_wq;
 
 	/* interface specific */
@@ -647,6 +646,7 @@ static int prepare_qmi_response(struct snd_usb_substream *subs,
 	dma_addr_t dma;
 	struct sg_table sgt;
 	bool dma_coherent;
+	struct snd_usb_audio *chip;
 
 	iface = usb_ifnum_to_if(subs->dev, subs->cur_audiofmt->iface);
 	if (!iface) {
@@ -928,8 +928,9 @@ skip_sync:
 
 	sg_free_table(&sgt);
 
-	if (!atomic_read(&uadev[card_num].in_use)) {
-		kref_init(&uadev[card_num].kref);
+	chip = uadev[card_num].chip;
+
+	if (atomic_read(&uadev[card_num].in_use) == 1) {
 		init_waitqueue_head(&uadev[card_num].disconnect_wq);
 		uadev[card_num].num_intf =
 			subs->dev->config->desc.bNumInterfaces;
@@ -939,10 +940,10 @@ skip_sync:
 			ret = -ENOMEM;
 			goto unmap_sync;
 		}
+
+		mutex_lock(&chip->mutex);
 		uadev[card_num].udev = subs->dev;
-		atomic_set(&uadev[card_num].in_use, 1);
-	} else {
-		kref_get(&uadev[card_num].kref);
+		mutex_unlock(&chip->mutex);
 	}
 
 	uadev[card_num].card_num = card_num;
@@ -1012,6 +1013,8 @@ static void uaudio_dev_intf_cleanup(struct usb_device *udev,
 	info->xfer_buf_pa = 0;
 
 	info->in_use = false;
+	uaudio_dbg("release resources: intf# %d card# %d\n",
+				info->intf_num, info->pcm_card_num);
 }
 
 static void uaudio_event_ring_cleanup_free(struct uaudio_dev *dev)
@@ -1040,8 +1043,6 @@ static void uaudio_dev_cleanup(struct uaudio_dev *dev)
 		if (!dev->info[if_idx].in_use)
 			continue;
 		uaudio_dev_intf_cleanup(dev->udev, &dev->info[if_idx]);
-		uaudio_dbg("release resources: intf# %d card# %d\n",
-				dev->info[if_idx].intf_num, dev->card_num);
 	}
 
 	dev->num_intf = 0;
@@ -1138,10 +1139,8 @@ done:
 	uadev[card_num].chip = NULL;
 }
 
-static void uaudio_dev_release(struct kref *kref)
+static void uaudio_dev_release(struct uaudio_dev *dev)
 {
-	struct uaudio_dev *dev = container_of(kref, struct uaudio_dev, kref);
-
 	uaudio_dbg("for dev %pK\n", dev);
 
 	uaudio_event_ring_cleanup_free(dev);
@@ -1647,6 +1646,18 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 	pcm_card_num = (req_msg->usb_token & SND_PCM_CARD_NUM_MASK) >> 16;
 
 	subs = find_substream(pcm_card_num, pcm_dev_num, direction);
+	/*In some of the exit early conditions, the ret value is not overridden with
+	an error code.  This would lead to a condition where the QMI response
+	status would be zero (success), while other fields are not properly
+	populated.  The error condition in question is: uaudio_err("invalid substream\n");
+	Address this by setting the ret value manually in case of an error condition.
+	This would allow for the audio DSP to treat the QMI response as a failure versus attempting to continue processing it.
+	The issue was seen if the audio device is disconnected shortly after attempting to start the audio session.*/
+	if (!subs) {
+		uaudio_err("invalid substream\n");
+		ret = -EINVAL;
+		goto response;
+	}
 	chip = uadev[pcm_card_num].chip;
 
 	ret = __handle_uaudio_stream_req(req_msg, &info_idx);
@@ -1669,6 +1680,10 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 	uadev[pcm_card_num].ctrl_intf = chip->ctrl_intf;
 	atomic_inc(&chip->usage_count);
 	if (req_msg->enable) {
+		mutex_lock(&chip->mutex);
+		atomic_inc(&uadev[pcm_card_num].in_use);
+		mutex_unlock(&chip->mutex);
+
 		ret = enable_audio_stream(subs,
 				map_pcm_format(req_msg->audio_format),
 				req_msg->number_of_ch, req_msg->bit_rate,
@@ -1676,6 +1691,13 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 		if (!ret)
 			ret = prepare_qmi_response(subs, req_msg, &resp,
 					info_idx);
+		if (ret) {
+			mutex_lock(&chip->mutex);
+			uaudio_dbg("failed to prepare qmi response %d\n", ret);
+			atomic_dec(&uadev[pcm_card_num].in_use);
+			mutex_unlock(&chip->mutex);
+		}
+
 	} else {
 		info = &uadev[pcm_card_num].info[info_idx];
 		if (info->data_ep_pipe) {
@@ -1714,12 +1736,9 @@ response:
 			uaudio_dev_intf_cleanup(
 					uadev[pcm_card_num].udev,
 					info);
-			uaudio_dbg("release resources: intf# %d card# %d\n",
-					info->intf_num, pcm_card_num);
 		}
-		if (atomic_read(&uadev[pcm_card_num].in_use))
-			kref_put(&uadev[pcm_card_num].kref,
-					uaudio_dev_release);
+		if (atomic_dec_and_test(&uadev[pcm_card_num].in_use))
+			uaudio_dev_release(&uadev[pcm_card_num]);
 		mutex_unlock(&chip->mutex);
 	}
 

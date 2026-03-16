@@ -384,6 +384,19 @@ static void show_one_worker_pool(struct worker_pool *pool);
 #define CREATE_TRACE_POINTS
 #include <trace/events/workqueue.h>
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+extern void _trace_android_vh_record_pcpu_rwsem_starttime(
+	struct task_struct *tsk, unsigned long settime);
+#define VIRTUAL_KWORKER_NICE (-1000)
+#define HOOKS_SET_UX_SIGN (1)
+void set_kworker_light(struct task_struct *task)
+{
+	task->kworker_flag = 1;
+	_trace_android_vh_record_pcpu_rwsem_starttime(task, HOOKS_SET_UX_SIGN);
+        pr_err("IO_SET_UX_0: comm=%-12s pid=%d\n", task->comm, task->pid);
+}
+#endif
+
 EXPORT_TRACEPOINT_SYMBOL_GPL(workqueue_execute_start);
 EXPORT_TRACEPOINT_SYMBOL_GPL(workqueue_execute_end);
 
@@ -1973,12 +1986,20 @@ static struct worker *create_worker(struct worker_pool *pool)
 
 	worker->id = id;
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (pool->cpu >= 0)
+		snprintf(id_buf, sizeof(id_buf), "%d:%d%s", pool->cpu, id,
+			(pool->attrs->nice == -1000) ? "X" : pool->attrs->nice < 0  ? "H" : "");
+	else
+		snprintf(id_buf, sizeof(id_buf), "%s%d:%d", (pool->attrs->nice == -1000) ? "X" : "u", pool->id, id);
+#else
+
 	if (pool->cpu >= 0)
 		snprintf(id_buf, sizeof(id_buf), "%d:%d%s", pool->cpu, id,
 			 pool->attrs->nice < 0  ? "H" : "");
 	else
 		snprintf(id_buf, sizeof(id_buf), "u%d:%d", pool->id, id);
-
+#endif
 	worker->task = kthread_create_on_node(worker_thread, worker, pool->node,
 					      "kworker/%s", id_buf);
 	if (IS_ERR(worker->task)) {
@@ -1987,7 +2008,15 @@ static struct worker *create_worker(struct worker_pool *pool)
 		goto fail;
 	}
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (pool->attrs->nice == VIRTUAL_KWORKER_NICE) {
+		set_kworker_light(worker->task);
+		set_user_nice(worker->task, MIN_NICE);
+	} else
+		set_user_nice(worker->task, pool->attrs->nice);
+#else
 	set_user_nice(worker->task, pool->attrs->nice);
+#endif
 	kthread_bind_mask(worker->task, pool->attrs->cpumask);
 
 	/* successful, attach the worker to the pool */
@@ -4025,6 +4054,11 @@ apply_wqattrs_prepare(struct workqueue_struct *wq,
 	 * the default pwq covering whole @attrs->cpumask.  Always create
 	 * it even if we don't use it immediately.
 	 */
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (wq->flags & WQ_UX)
+		new_attrs->nice = VIRTUAL_KWORKER_NICE;
+#endif
+
 	ctx->dfl_pwq = alloc_unbound_pwq(wq, new_attrs);
 	if (!ctx->dfl_pwq)
 		goto out_free;
@@ -4043,6 +4077,10 @@ apply_wqattrs_prepare(struct workqueue_struct *wq,
 	/* save the user configured attrs and sanitize it. */
 	copy_workqueue_attrs(new_attrs, attrs);
 	cpumask_and(new_attrs->cpumask, new_attrs->cpumask, cpu_possible_mask);
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (wq->flags & WQ_UX)
+		new_attrs->nice = VIRTUAL_KWORKER_NICE;
+#endif
 	ctx->attrs = new_attrs;
 
 	ctx->wq = wq;
@@ -5579,7 +5617,13 @@ static ssize_t wq_nice_show(struct device *dev, struct device_attribute *attr,
 	int written;
 
 	mutex_lock(&wq->mutex);
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	written = scnprintf(buf, PAGE_SIZE, "%d\n",
+			wq->unbound_attrs->nice == VIRTUAL_KWORKER_NICE ?
+				MIN_NICE : wq->unbound_attrs->nice);
+#else
 	written = scnprintf(buf, PAGE_SIZE, "%d\n", wq->unbound_attrs->nice);
+#endif
 	mutex_unlock(&wq->mutex);
 
 	return written;
@@ -5948,10 +5992,18 @@ static void wq_watchdog_timer_fn(struct timer_list *unused)
 
 notrace void wq_watchdog_touch(int cpu)
 {
-	if (cpu >= 0)
-		per_cpu(wq_watchdog_touched_cpu, cpu) = jiffies;
+	unsigned long thresh = READ_ONCE(wq_watchdog_thresh) * HZ;
+	unsigned long touch_ts = READ_ONCE(wq_watchdog_touched);
+	unsigned long now = jiffies;
 
-	wq_watchdog_touched = jiffies;
+	if (cpu >= 0)
+		per_cpu(wq_watchdog_touched_cpu, cpu) = now;
+	else
+		WARN_ONCE(1, "%s should be called with valid CPU", __func__);
+
+	/* Don't unnecessarily store to global cacheline */
+	if (time_after(now, touch_ts + thresh / 4))
+		WRITE_ONCE(wq_watchdog_touched, jiffies);
 }
 
 static void wq_watchdog_set_thresh(unsigned long thresh)

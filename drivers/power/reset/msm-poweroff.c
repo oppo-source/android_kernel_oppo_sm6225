@@ -448,6 +448,17 @@ static void msm_restart_prepare(const char *cmd)
 		} else if (!strcmp(cmd, "dm-verity enforcing")) {
 			reason = PON_RESTART_REASON_DMVERITY_ENFORCE;
 			__raw_writel(0x77665509, restart_reason);
+#ifdef OPLUS_OEM_BOOT_MODE
+		} else if(!strncmp(cmd, "sbllowmemtest", 13)){
+				reason = PON_RESTART_REASON_SBL_DDR_CUS;
+			__raw_writel(0x7766550b, restart_reason);
+		}else if (!strncmp(cmd, "sblmemtest", 10)){
+				reason = PON_RESTART_REASON_SBL_DDRTEST;
+			__raw_writel(0x7766550b, restart_reason);
+		} else if(!strncmp(cmd, "usermemaging", 12)){
+				reason = PON_RESTART_REASON_MEM_AGING;
+			__raw_writel(0x7766550b, restart_reason);
+#endif
 		} else if (!strcmp(cmd, "keys clear")) {
 			reason = PON_RESTART_REASON_KEYS_CLEAR;
 			__raw_writel(0x7766550a, restart_reason);
@@ -461,7 +472,33 @@ static void msm_restart_prepare(const char *cmd)
 					     restart_reason);
 		} else if (!strncmp(cmd, "edl", 3)) {
 			enable_emergency_dload_mode();
-		} else {
+		}
+#ifdef OPLUS_OEM_BOOT_MODE
+		else if (!strncmp(cmd, "rf", 2)) {
+				reason = PON_RESTART_REASON_RF;
+		} else if (!strncmp(cmd, "wlan",4)) {
+				reason = PON_RESTART_REASON_WLAN;
+		} else if (!strncmp(cmd, "mos", 3)) {
+				reason = PON_RESTART_REASON_MOS;
+		} else if (!strncmp(cmd, "ftm", 3)) {
+				reason = PON_RESTART_REASON_FACTORY;
+		} else if (!strncmp(cmd, "kernel", 6)) {
+				reason = PON_RESTART_REASON_KERNEL;
+		} else if (!strncmp(cmd, "modem", 5)) {
+				reason = PON_RESTART_REASON_MODEM;
+		} else if (!strncmp(cmd, "android", 7)) {
+				reason = PON_RESTART_REASON_ANDROID;
+		} else if (!strncmp(cmd, "silence", 7)) {
+				reason = PON_RESTART_REASON_SILENCE;
+		} else if (!strncmp(cmd, "sau", 3)) {
+				reason = PON_RESTART_REASON_SAU;
+		} else if (!strncmp(cmd, "safe", 4)) {
+				reason = PON_RESTART_REASON_SAFE;
+		} else if (!strncmp(cmd, "novib", 5)) {
+				reason =PON_RESTART_REASON_REBOOT_NO_VIBRATION;
+		}
+#endif
+		else {
 			__raw_writel(0x77665501, restart_reason);
 		}
 
