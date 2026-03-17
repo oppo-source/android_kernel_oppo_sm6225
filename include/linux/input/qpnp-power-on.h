@@ -12,6 +12,82 @@
 #include <linux/errno.h>
 #include <linux/types.h>
 
+#if IS_MODULE(CONFIG_OPLUS_FEATURE_QCOM_PMICWD)
+#include <linux/regulator/driver.h>
+#include <linux/regulator/machine.h>
+#include <linux/regulator/of_regulator.h>
+struct qpnp_pon_config {
+	u32			pon_type;
+	u32			support_reset;
+	u32			key_code;
+	u32			s1_timer;
+	u32			s2_timer;
+	u32			s2_type;
+	bool			pull_up;
+	int			state_irq;
+	int			bark_irq;
+	u16			s2_cntl_addr;
+	u16			s2_cntl2_addr;
+	bool			old_state;
+	bool			use_bark;
+	bool			config_reset;
+};
+
+struct pon_regulator {
+	struct qpnp_pon		*pon;
+	struct regulator_dev	*rdev;
+	struct regulator_desc	rdesc;
+	u32			addr;
+	u32			bit;
+	bool			enabled;
+};
+
+struct qpnp_pon {
+	struct device		*dev;
+	struct regmap		*regmap;
+	struct input_dev	*pon_input;
+	struct qpnp_pon_config	*pon_cfg;
+	struct pon_regulator	*pon_reg_cfg;
+	struct list_head	restore_regs;
+	struct list_head	list;
+	struct mutex		restore_lock;
+	struct delayed_work	bark_work;
+	struct dentry		*debugfs;
+#if IS_ENABLED(CONFIG_OPLUS_POWER_NOTIFIER)
+	struct delayed_work     oplus_bark_work;
+	struct workqueue_struct *oplus_pon_workqueue;
+#endif
+	u16			base;
+	u16			pbs_base;
+	u8			subtype;
+	u8			pon_ver;
+	u8			warm_reset_reason1;
+	u8			warm_reset_reason2;
+	int			num_pon_config;
+	int			num_pon_reg;
+	int			pon_trigger_reason;
+	int			pon_power_off_reason;
+	u32			dbc_time_us;
+	u32			uvlo;
+	int			warm_reset_poff_type;
+	int			hard_reset_poff_type;
+	int			shutdown_poff_type;
+	int			resin_warm_reset_type;
+	int			resin_hard_reset_type;
+	int			resin_shutdown_type;
+	bool			is_spon;
+	bool			store_hard_reset_reason;
+	bool			resin_hard_reset_disable;
+	bool			resin_shutdown_disable;
+	bool			ps_hold_hard_reset_disable;
+	bool			ps_hold_shutdown_disable;
+	bool			kpdpwr_dbc_enable;
+	bool			resin_pon_reset;
+	ktime_t			kpdpwr_last_release_time;
+	bool			legacy_hard_reset_offset;
+};
+#endif
+
 /**
  * enum pon_trigger_source: List of PON trigger sources
  * %PON_SMPL:		PON triggered by Sudden Momentary Power Loss (SMPL)
@@ -56,10 +132,32 @@ enum pon_restart_reason {
 	PON_RESTART_REASON_DMVERITY_CORRUPTED	= 0x04,
 	PON_RESTART_REASON_DMVERITY_ENFORCE	= 0x05,
 	PON_RESTART_REASON_KEYS_CLEAR		= 0x06,
-	PON_RESTART_REASON_SILENT				= 0x0a,
-	PON_RESTART_REASON_NON_SILENT			= 0x0b,
-	PON_RESTART_REASON_FORCED_SILENT		= 0x0c,
+#ifdef OPLUS_OEM_BOOT_MODE
+        /* Add for oplus boot mode*/
+	PON_RESTART_REASON_SILENCE		= 0x21,
+	PON_RESTART_REASON_SAU			= 0x22,
+	PON_RESTART_REASON_RF			= 0x23,
+	PON_RESTART_REASON_WLAN			= 0x24,
+	PON_RESTART_REASON_MOS			= 0x25,
+	PON_RESTART_REASON_FACTORY		= 0x26,
+	PON_RESTART_REASON_KERNEL		= 0x27,
+	PON_RESTART_REASON_MODEM		= 0x28,
+	PON_RESTART_REASON_ANDROID		= 0x29,
+	PON_RESTART_REASON_SAFE			= 0x2A,
+	PON_RESTART_REASON_SBL_DDRTEST		= 0x2B, /* sbllowmemtest */
+	PON_RESTART_REASON_SBL_DDR_CUS		= 0x2C, /* sblmemtest */
+	PON_RESTART_REASON_MEM_AGING		= 0x2D, /* usermemaging */
+	PON_RESTART_REASON_REBOOT_NO_VIBRATION	= 0x2F,
+      /*0x2E is SBLTEST FAIL, just happen in ddrtest fail when xbl setup*/
+	PON_RESTART_REASON_NORMAL		= 0x3E,
+#else
+	PON_RESTART_REASON_REBOOT_NO_VIBRATION	= 0x2F,
+	PON_RESTART_REASON_NORMAL		= 0x3E,
+	PON_RESTART_REASON_SILENT		= 0x0a,
+	PON_RESTART_REASON_NON_SILENT		= 0x0b,
+	PON_RESTART_REASON_FORCED_SILENT	= 0x0c,
 	PON_RESTART_REASON_FORCED_NON_SILENT	= 0x0d,
+  #endif
 };
 
 #if IS_ENABLED(CONFIG_INPUT_QPNP_POWER_ON)

@@ -2422,8 +2422,14 @@ static int qcom_socinfo_probe(struct platform_device *pdev)
 					   SOCINFO_MAJOR(le32_to_cpu(info->ver)),
 					   SOCINFO_MINOR(le32_to_cpu(info->ver)));
 	qs->attr.soc_id = kasprintf(GFP_KERNEL, "%d", socinfo_get_id());
-	if (offsetof(struct socinfo, serial_num) <= item_size)
+	if (!qs->attr.soc_id || !qs->attr.revision)
+		return -ENOMEM;
+
+	if (offsetofend(struct socinfo, serial_num) <= item_size) {
 		qs->attr.serial_number = kasprintf(GFP_KERNEL, "%u", socinfo_get_serial_number());
+		if (!qs->attr.serial_number)
+			return -ENOMEM;
+	}
 
 	if (socinfo_format >= SOCINFO_VERSION(0, 16)) {
 		socinfo_enumerate_partinfo_details();

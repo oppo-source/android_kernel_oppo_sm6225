@@ -435,6 +435,14 @@ config QCOM_SMP2P_SLEEPSTATE
 	  notifications from the remote to prevent suspend on the local
 	  processor.
 
+config OPLUS_SENSOR_WAKEUP_TRACE
+	tristate "SMP2P Sensor wakeup trace"
+	default m
+	depends on QCOM_SMP2P
+	help
+	  When this option is enabled, the time and type of sensor
+	  wake-up AP will be recorded.
+
 config SENSORS_SSC
 	tristate "Enable Sensors Driver Support for SSC"
 	depends on REMOTEPROC
@@ -669,6 +677,12 @@ config QCOM_SUBSYS_STATUS
 	  PM sequence. Enable this driver to check subsystem sleep state
 	  during PM suspend cycle.
 
+config OPLUS_POWERINFO_RPMH
+	bool "powerinfo rpmh config"
+	default n
+	help
+	  Select this config to enable powerinfo rpmh
+
 config QTI_RPM_STATS_LOG
 	tristate "Qualcomm Technologies, Inc. (QTI) RPM Stats Driver"
 	help
@@ -780,7 +794,7 @@ config QCOM_WATCHDOG_BARK_TIME
 	depends on QCOM_WDT_CORE
 	int "Qualcomm Technologies, Inc. Watchdog bark time in ms"
 	default 11000
-	range 11000 11000
+	range 11000 28000
 	help
 	  The amount of time, in milliseconds, that should elapse after
 	  a watchdog timer reset before a bark interrupt is sent from the

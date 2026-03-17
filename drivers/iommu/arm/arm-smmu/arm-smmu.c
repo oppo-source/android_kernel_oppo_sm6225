@@ -57,6 +57,7 @@
 
 #define CREATE_TRACE_POINTS
 #include "arm-smmu-trace.h"
+#include <soc/oplus/system/oplus_project.h>
 
 /*
  * Apparently, some Qualcomm arm64 platforms which appear to expose their SMMU
@@ -2264,7 +2265,14 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	 * to 5-10sec worth of reprogramming the context bank, while
 	 * the system appears to be locked up to the user.
 	 */
-	pm_runtime_set_autosuspend_delay(smmu->dev, 20);
+	if(is_project(24281) || is_project(24282) || is_project(24283) || is_project(24284)
+		|| is_project(24300) || is_project(24301) || is_project(24302) || is_project(24303)
+		|| is_project(24304) || is_project(24306) || is_project(24307) || is_project(24308)
+		|| is_project(24309) || is_project(24288) || is_project(24289)) {
+		pm_runtime_set_autosuspend_delay(smmu->dev, 5);
+	} else {
+		pm_runtime_set_autosuspend_delay(smmu->dev, 20);
+	}
 	pm_runtime_use_autosuspend(smmu->dev);
 
 rpm_put:
@@ -2700,8 +2708,17 @@ static struct iommu_device *arm_smmu_probe_device(struct device *dev)
 			goto out_free;
 	} else if (fwspec && fwspec->ops == &arm_smmu_ops.iommu_ops) {
 		smmu = arm_smmu_get_by_fwnode(fwspec->iommu_fwnode);
+
+		/*
+		 * Defer probe if the relevant SMMU instance hasn't finished
+		 * probing yet. This is a fragile hack and we'd ideally
+		 * avoid this race in the core code. Until that's ironed
+		 * out, however, this is the most pragmatic option on the
+		 * table.
+		 */
 		if (!smmu)
-			return ERR_PTR(-ENODEV);
+			return ERR_PTR(dev_err_probe(dev, -EPROBE_DEFER,
+						"smmu dev has not bound yet\n"));
 	} else {
 		return ERR_PTR(-ENODEV);
 	}
@@ -4036,6 +4053,10 @@ static int arm_smmu_device_remove(struct platform_device *pdev)
 
 static void arm_smmu_device_shutdown(struct platform_device *pdev)
 {
+	if (!strcmp(dev_name(&pdev->dev), "59a0000.kgsl-smmu")) {
+		dev_err(&pdev->dev, "skip arm_smmu_device_remove\n");
+		return;
+	}
 	arm_smmu_device_remove(pdev);
 }
 

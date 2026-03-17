@@ -142,7 +142,7 @@ static DEFINE_SPINLOCK(qrtr_port_lock);
 #define QRTR_BACKUP_HI_SIZE	SZ_16K
 #define QRTR_BACKUP_MD_NUM	20
 #define QRTR_BACKUP_MD_SIZE	SZ_1K
-#define QRTR_BACKUP_LO_NUM	20
+#define QRTR_BACKUP_LO_NUM	1024
 #define QRTR_BACKUP_LO_SIZE	SZ_256
 static struct sk_buff_head qrtr_backup_lo;
 static struct sk_buff_head qrtr_backup_md;
@@ -1826,7 +1826,7 @@ static int qrtr_bcast_enqueue(struct qrtr_node *node, struct sk_buff *skb,
 		if (node->nid == QRTR_EP_NID_AUTO && type != QRTR_TYPE_HELLO)
 			continue;
 
-		skbn = skb_clone(skb, GFP_KERNEL);
+		skbn = pskb_copy(skb, GFP_KERNEL);
 		if (!skbn)
 			break;
 		skb_set_owner_w(skbn, skb->sk);

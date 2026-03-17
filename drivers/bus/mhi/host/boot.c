@@ -58,9 +58,9 @@ int mhi_rddm_download_status(struct mhi_controller *mhi_cntrl)
 {
 	u32 rx_status;
 	enum mhi_ee_type ee;
-	const u32 delayms = 5;
+	const u32 delayus = 5000;
 	void __iomem *base = mhi_cntrl->bhie;
-	u32 retry = (mhi_cntrl->timeout_ms) / delayms;
+	u32 retry = (mhi_cntrl->timeout_ms * 1000) / delayus;
 	struct device *dev = &mhi_cntrl->mhi_dev->dev;
 	int ret = 0;
 
@@ -77,7 +77,7 @@ int mhi_rddm_download_status(struct mhi_controller *mhi_cntrl)
 			return 0;
 		}
 
-		msleep(delayms);
+		udelay(delayus);
 	}
 
 	ee = mhi_get_exec_env(mhi_cntrl);
@@ -94,7 +94,8 @@ static int __mhi_download_rddm_in_panic(struct mhi_controller *mhi_cntrl)
 	int ret;
 	enum mhi_ee_type ee;
 	const u32 delayus = 2000;
-	int rddm_retry = mhi_cntrl->rddm_timeout_us / delayus;
+	const u32 rddm_timeout_us = 200000;
+	int rddm_retry = rddm_timeout_us / delayus;
 	struct device *dev = &mhi_cntrl->mhi_dev->dev;
 
 	MHI_VERB(dev, "Entered with pm_state:%s dev_state:%s ee:%s\n",
@@ -576,7 +577,7 @@ int mhi_download_amss_image(struct mhi_controller *mhi_cntrl)
 			       /* Vector table is the last entry */
 			       &image_info->mhi_buf[image_info->entries - 1]);
 	if (ret) {
-		MHI_ERR(dev, "MHI did not load AMSS, ret:%d\n", ret);
+		dev_err(dev, "MHI did not load AMSS, ret:%d\n", ret);
 		write_lock_irq(&mhi_cntrl->pm_lock);
 		new_state = mhi_tryset_pm_state(mhi_cntrl, MHI_PM_FW_DL_ERR);
 		write_unlock_irq(&mhi_cntrl->pm_lock);

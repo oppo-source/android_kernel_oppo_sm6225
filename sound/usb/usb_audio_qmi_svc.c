@@ -1012,6 +1012,8 @@ static void uaudio_dev_intf_cleanup(struct usb_device *udev,
 	info->xfer_buf_pa = 0;
 
 	info->in_use = false;
+	uaudio_dbg("release resources: intf# %d card# %d\n",
+				info->intf_num, info->pcm_card_num);
 }
 
 static void uaudio_event_ring_cleanup_free(struct uaudio_dev *dev)
@@ -1040,8 +1042,6 @@ static void uaudio_dev_cleanup(struct uaudio_dev *dev)
 		if (!dev->info[if_idx].in_use)
 			continue;
 		uaudio_dev_intf_cleanup(dev->udev, &dev->info[if_idx]);
-		uaudio_dbg("release resources: intf# %d card# %d\n",
-				dev->info[if_idx].intf_num, dev->card_num);
 	}
 
 	dev->num_intf = 0;
@@ -1647,6 +1647,18 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 	pcm_card_num = (req_msg->usb_token & SND_PCM_CARD_NUM_MASK) >> 16;
 
 	subs = find_substream(pcm_card_num, pcm_dev_num, direction);
+	/*In some of the exit early conditions, the ret value is not overridden with
+	an error code.  This would lead to a condition where the QMI response
+	status would be zero (success), while other fields are not properly
+	populated.  The error condition in question is: uaudio_err("invalid substream\n");
+	Address this by setting the ret value manually in case of an error condition.
+	This would allow for the audio DSP to treat the QMI response as a failure versus attempting to continue processing it.
+	The issue was seen if the audio device is disconnected shortly after attempting to start the audio session.*/
+	if (!subs) {
+		uaudio_err("invalid substream\n");
+		ret = -EINVAL;
+		goto response;
+	}
 	chip = uadev[pcm_card_num].chip;
 
 	ret = __handle_uaudio_stream_req(req_msg, &info_idx);
@@ -1714,8 +1726,6 @@ response:
 			uaudio_dev_intf_cleanup(
 					uadev[pcm_card_num].udev,
 					info);
-			uaudio_dbg("release resources: intf# %d card# %d\n",
-					info->intf_num, pcm_card_num);
 		}
 		if (atomic_read(&uadev[pcm_card_num].in_use))
 			kref_put(&uadev[pcm_card_num].kref,

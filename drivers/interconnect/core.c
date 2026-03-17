@@ -15,7 +15,7 @@
 #include <linux/list.h>
 #include <linux/sched/mm.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
+#include <linux/rtmutex.h>
 #include <linux/slab.h>
 #include <linux/of.h>
 #include <linux/overflow.h>
@@ -29,7 +29,7 @@ static DEFINE_IDR(icc_idr);
 static LIST_HEAD(icc_providers);
 static int providers_count;
 static bool synced_state;
-static DEFINE_MUTEX(icc_lock);
+static DEFINE_RT_MUTEX(icc_lock);
 static struct dentry *icc_debugfs_dir;
 
 static void icc_summary_show_one(struct seq_file *s, struct icc_node *n)
@@ -48,7 +48,7 @@ static int icc_summary_show(struct seq_file *s, void *data)
 	seq_puts(s, " node                                  tag          avg         peak\n");
 	seq_puts(s, "--------------------------------------------------------------------\n");
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	list_for_each_entry(provider, &icc_providers, provider_list) {
 		struct icc_node *n;
@@ -74,7 +74,7 @@ static int icc_summary_show(struct seq_file *s, void *data)
 		}
 	}
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	return 0;
 }
@@ -105,7 +105,7 @@ static int icc_graph_show(struct seq_file *s, void *data)
 	int i;
 
 	seq_puts(s, "digraph {\n\trankdir = LR\n\tnode [shape = record]\n");
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	/* draw providers as cluster subgraphs */
 	cluster_index = 0;
@@ -137,7 +137,7 @@ static int icc_graph_show(struct seq_file *s, void *data)
 					icc_graph_show_link(s, 1, n,
 							    n->links[i]);
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 	seq_puts(s, "}");
 
 	return 0;
@@ -363,7 +363,7 @@ struct icc_node_data *of_icc_get_from_provider(struct of_phandle_args *spec)
 	if (!spec)
 		return ERR_PTR(-EINVAL);
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 	list_for_each_entry(provider, &icc_providers, provider_list) {
 		if (provider->dev->of_node == spec->np) {
 			if (provider->xlate_extended) {
@@ -379,7 +379,10 @@ struct icc_node_data *of_icc_get_from_provider(struct of_phandle_args *spec)
 			}
 		}
 	}
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
+
+	if (!node)
+		return ERR_PTR(-EINVAL);
 
 	if (IS_ERR(node))
 		return ERR_CAST(node);
@@ -491,9 +494,9 @@ struct icc_path *of_icc_get_by_index(struct device *dev, int idx)
 		return ERR_CAST(dst_data);
 	}
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 	path = path_find(dev, src_data->node, dst_data->node);
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 	if (IS_ERR(path)) {
 		dev_err(dev, "%s: invalid path=%ld\n", __func__, PTR_ERR(path));
 		goto free_icc_data;
@@ -578,12 +581,12 @@ void icc_set_tag(struct icc_path *path, u32 tag)
 	if (!path)
 		return;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	for (i = 0; i < path->num_nodes; i++)
 		path->reqs[i].tag = tag;
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 }
 EXPORT_SYMBOL_GPL(icc_set_tag);
 
@@ -633,7 +636,7 @@ int icc_set_bw(struct icc_path *path, u32 avg_bw, u32 peak_bw)
 	if (WARN_ON(IS_ERR(path) || !path->num_nodes))
 		return -EINVAL;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	old_avg = path->reqs[0].avg_bw;
 	old_peak = path->reqs[0].peak_bw;
@@ -665,7 +668,7 @@ int icc_set_bw(struct icc_path *path, u32 avg_bw, u32 peak_bw)
 		apply_constraints(path);
 	}
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	trace_icc_set_bw_end(path, ret);
 
@@ -683,12 +686,12 @@ static int __icc_enable(struct icc_path *path, bool enable)
 	if (WARN_ON(IS_ERR(path) || !path->num_nodes))
 		return -EINVAL;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	for (i = 0; i < path->num_nodes; i++)
 		path->reqs[i].enabled = enable;
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	return icc_set_bw(path, path->reqs[0].avg_bw,
 			  path->reqs[0].peak_bw);
@@ -727,7 +730,7 @@ struct icc_path *icc_get(struct device *dev, const int src_id, const int dst_id)
 	struct icc_node *src, *dst;
 	struct icc_path *path = ERR_PTR(-EPROBE_DEFER);
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	src = node_find(src_id);
 	if (!src)
@@ -749,7 +752,7 @@ struct icc_path *icc_get(struct device *dev, const int src_id, const int dst_id)
 		path = ERR_PTR(-ENOMEM);
 	}
 out:
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 	return path;
 }
 EXPORT_SYMBOL_GPL(icc_get);
@@ -774,14 +777,14 @@ void icc_put(struct icc_path *path)
 	if (ret)
 		pr_err("%s: error (%d)\n", __func__, ret);
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 	for (i = 0; i < path->num_nodes; i++) {
 		node = path->reqs[i].node;
 		hlist_del(&path->reqs[i].req_node);
 		if (!WARN_ON(!node->provider->users))
 			node->provider->users--;
 	}
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	kfree_const(path->name);
 	kfree(path);
@@ -823,11 +826,11 @@ struct icc_node *icc_node_create(int id)
 {
 	struct icc_node *node;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	node = icc_node_create_nolock(id);
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	return node;
 }
@@ -841,7 +844,7 @@ void icc_node_destroy(int id)
 {
 	struct icc_node *node;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	node = node_find(id);
 	if (node) {
@@ -849,7 +852,7 @@ void icc_node_destroy(int id)
 		WARN_ON(!hlist_empty(&node->req_list));
 	}
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	if (!node)
 		return;
@@ -881,7 +884,7 @@ int icc_link_create(struct icc_node *node, const int dst_id)
 	if (!node->provider)
 		return -EINVAL;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	dst = node_find(dst_id);
 	if (!dst) {
@@ -905,7 +908,7 @@ int icc_link_create(struct icc_node *node, const int dst_id)
 	node->links[node->num_links++] = dst;
 
 out:
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	return ret;
 }
@@ -930,7 +933,7 @@ int icc_link_destroy(struct icc_node *src, struct icc_node *dst)
 	if (IS_ERR_OR_NULL(dst))
 		return -EINVAL;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	for (slot = 0; slot < src->num_links; slot++)
 		if (src->links[slot] == dst)
@@ -951,7 +954,7 @@ int icc_link_destroy(struct icc_node *src, struct icc_node *dst)
 		ret = -ENOMEM;
 
 out:
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	return ret;
 }
@@ -967,7 +970,7 @@ void icc_node_add(struct icc_node *node, struct icc_provider *provider)
 	if (WARN_ON(node->provider))
 		return;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	node->provider = provider;
 	list_add_tail(&node->node_list, &provider->nodes);
@@ -993,7 +996,7 @@ void icc_node_add(struct icc_node *node, struct icc_provider *provider)
 	node->avg_bw = 0;
 	node->peak_bw = 0;
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 }
 EXPORT_SYMBOL_GPL(icc_node_add);
 
@@ -1003,11 +1006,11 @@ EXPORT_SYMBOL_GPL(icc_node_add);
  */
 void icc_node_del(struct icc_node *node)
 {
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	list_del(&node->node_list);
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 }
 EXPORT_SYMBOL_GPL(icc_node_del);
 
@@ -1046,12 +1049,12 @@ int icc_provider_add(struct icc_provider *provider)
 	if (WARN_ON(!provider->xlate && !provider->xlate_extended))
 		return -EINVAL;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 
 	INIT_LIST_HEAD(&provider->nodes);
 	list_add_tail(&provider->provider_list, &icc_providers);
 
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	dev_dbg(provider->dev, "interconnect provider added to topology\n");
 
@@ -1067,22 +1070,22 @@ EXPORT_SYMBOL_GPL(icc_provider_add);
  */
 int icc_provider_del(struct icc_provider *provider)
 {
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 	if (provider->users) {
 		pr_warn("interconnect provider still has %d users\n",
 			provider->users);
-		mutex_unlock(&icc_lock);
+		rt_mutex_unlock(&icc_lock);
 		return -EBUSY;
 	}
 
 	if (!list_empty(&provider->nodes)) {
 		pr_warn("interconnect provider still has nodes\n");
-		mutex_unlock(&icc_lock);
+		rt_mutex_unlock(&icc_lock);
 		return -EBUSY;
 	}
 
 	list_del(&provider->provider_list);
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 
 	return 0;
 }
@@ -1119,7 +1122,7 @@ void icc_sync_state(struct device *dev)
 	if (count < providers_count)
 		return;
 
-	mutex_lock(&icc_lock);
+	rt_mutex_lock(&icc_lock);
 	synced_state = true;
 	list_for_each_entry(p, &icc_providers, provider_list) {
 		dev_dbg(p->dev, "interconnect provider is in synced state\n");
@@ -1132,7 +1135,7 @@ void icc_sync_state(struct device *dev)
 			}
 		}
 	}
-	mutex_unlock(&icc_lock);
+	rt_mutex_unlock(&icc_lock);
 }
 EXPORT_SYMBOL_GPL(icc_sync_state);
 

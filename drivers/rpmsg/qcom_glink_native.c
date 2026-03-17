@@ -196,6 +196,7 @@ struct qcom_glink {
 
 	void *ilc;
 	struct cpumask cpu_mask;
+	struct glink_core_rx_intent pre_intent;
 };
 
 enum {
@@ -723,8 +724,12 @@ static void __qcom_glink_rx_done(struct qcom_glink *glink,
 
 	/* We don't send RX_DONE to intentless systems */
 	if (glink->intentless) {
-		kfree(intent->data);
-		kfree(intent);
+		if (!intent->reuse) {
+			kfree(intent->data);
+			kfree(intent);
+		} else {
+			intent->in_use = false;
+		}
 		return;
 	}
 
@@ -1118,17 +1123,31 @@ static int qcom_glink_rx_data(struct qcom_glink *glink, size_t avail)
 	if (glink->intentless) {
 		/* Might have an ongoing, fragmented, message to append */
 		if (!channel->buf) {
-			intent = kzalloc(sizeof(*intent), GFP_ATOMIC);
-			if (!intent)
-				return -ENOMEM;
-
-			intent->data = kmalloc(chunk_size + left_size,
-					       GFP_ATOMIC);
-			if (!intent->data) {
-				kfree(intent);
+			intent = kzalloc(sizeof(*intent), GFP_ATOMIC | __GFP_MEMALLOC);
+			if (!intent) {
+				if (glink->pre_intent.data && !glink->pre_intent.in_use && chunk_size + left_size < PAGE_SIZE) {
+					pr_warn("[%s][ch:%s]alloc failed, try use the pre-allocted intent\n", __func__, channel->name);
+					intent = &glink->pre_intent;
+					intent->in_use = true;
+					goto try_use_pre_intent;
+				}
 				return -ENOMEM;
 			}
 
+			intent->data = kmalloc(chunk_size + left_size,
+					       GFP_ATOMIC | __GFP_MEMALLOC);
+			if (!intent->data) {
+				kfree(intent);
+				if (glink->pre_intent.data && !glink->pre_intent.in_use && chunk_size + left_size < PAGE_SIZE) {
+					pr_warn("[%s][ch:%s]alloc failed, try use the pre-allocted intent\n", __func__, channel->name);
+					intent = &glink->pre_intent;
+					intent->in_use = true;
+					goto try_use_pre_intent;
+				}
+				return -ENOMEM;
+			}
+
+try_use_pre_intent:
 			intent->id = 0xbabababa;
 			intent->size = chunk_size + left_size;
 			intent->offset = 0;
@@ -2452,6 +2471,11 @@ struct qcom_glink *qcom_glink_native_probe(struct device *dev,
 
 	glink->features = features;
 	glink->intentless = intentless;
+	if (glink->intentless) {
+		glink->pre_intent.data = kzalloc(PAGE_SIZE, GFP_KERNEL);
+		glink->pre_intent.reuse = true;
+		glink->pre_intent.in_use = false;
+	}
 
 	spin_lock_init(&glink->tx_lock);
 	spin_lock_init(&glink->rx_lock);

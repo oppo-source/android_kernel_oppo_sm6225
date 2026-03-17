@@ -114,6 +114,10 @@
 
 #define HSTX_TRIMSIZE			4
 
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+#define PHY_HOST_MODE			BIT(0)
+#endif
+
 enum port_state {
 	PORT_UNKNOWN,
 	PORT_DISCONNECTED,
@@ -154,6 +158,10 @@ struct qusb_phy {
 	int			vdd_levels[3]; /* none, low, high */
 	int			init_seq_len;
 	int			*qusb_phy_init_seq;
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	int			host_init_seq_len;
+	int			*qusb_phy_host_init_seq;
+#endif
 	u32			major_rev;
 	u32			usb_hs_ac_bitmask;
 	u32			usb_hs_ac_value;
@@ -512,9 +520,21 @@ static int qusb_phy_init(struct usb_phy *phy)
 	if (qphy->ref_clk_base)
 		reset_val = readl_relaxed(qphy->base + QUSB2PHY_PLL_TEST);
 
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	if (qphy->qusb_phy_host_init_seq && qphy->phy.flags & PHY_HOST_MODE) {
+		dev_info(phy->dev, "set host phy init parameters\n");
+		qusb_phy_write_seq(qphy->base, qphy->qusb_phy_host_init_seq,
+				qphy->host_init_seq_len, 0);
+	} else {
+		dev_info(phy->dev, "set device phy init parameters\n");
+		qusb_phy_write_seq(qphy->base, qphy->qusb_phy_init_seq,
+				qphy->init_seq_len, 0);
+	}
+#else
 	if (qphy->qusb_phy_init_seq)
 		qusb_phy_write_seq(qphy->base, qphy->qusb_phy_init_seq,
 				qphy->init_seq_len, 0);
+#endif
 
 	/*
 	 * Check for EFUSE value only if tune2_efuse_reg is available
@@ -657,9 +677,19 @@ static int qusb_phy_set_suspend(struct usb_phy *phy, int suspend)
 		return 0;
 	}
 
-	if (suspend) {
-		/* Bus suspend case */
-		if (qphy->cable_connected) {
+	if (suspend) {  /* Bus suspend case */
+//#ifdef OPLUS_FEATURE_CHG_BASIC    /* Qcom patch: CR_3641797 */
+		/*
+		* The HUB class drivers calls usb_phy_notify_disconnect() upon a device
+		* disconnect. Consider a scenario where a USB device is disconnected without
+		* detaching the OTG cable. phy->cable_connected is marked false due to above
+		* mentioned call path. Now, while entering low power mode (host bus suspend),
+		* we come here and turn off regulators thinking no cable is connected. Prevent
+		* this by not turning off regulators while in host mode.
+		*/
+
+		if (qphy->cable_connected || (qphy->phy.flags & PHY_HOST_MODE)) {
+//#endif
 			/* Clear all interrupts */
 			writel_relaxed(0x00,
 				qphy->base + QUSB2PHY_PORT_INTR_CTRL);
@@ -1599,6 +1629,25 @@ static int qusb_phy_probe(struct platform_device *pdev)
 			dev_err(dev, "error allocating memory for phy_init_seq\n");
 		}
 	}
+
+#ifdef  OPLUS_FEATURE_CHG_BASIC
+	qphy->host_init_seq_len = of_property_count_elems_of_size(dev->of_node,
+				"qcom,qusb-phy-host-init-seq",
+				sizeof(*qphy->qusb_phy_host_init_seq));
+	if (qphy->host_init_seq_len > 0) {
+		qphy->qusb_phy_host_init_seq = devm_kcalloc(dev,
+					qphy->host_init_seq_len,
+					sizeof(*qphy->qusb_phy_host_init_seq),
+					GFP_KERNEL);
+		if (qphy->qusb_phy_host_init_seq)
+			of_property_read_u32_array(dev->of_node,
+				"qcom,qusb-phy-host-init-seq",
+				qphy->qusb_phy_host_init_seq,
+				qphy->host_init_seq_len);
+		else
+			return -ENOMEM;
+	}
+#endif
 
 	qphy->ulpi_mode = false;
 	ret = of_property_read_string(dev->of_node, "phy_type", &phy_type);
