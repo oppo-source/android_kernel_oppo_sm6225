@@ -482,7 +482,8 @@ static int fsa4480_usbc_analog_setup_switches_ucsi(
 
 		#ifdef OPLUS_ARCH_EXTENDS
 		/* Add DIO4480 support */
-		if((fsa_priv->vendor != DIO4480) && (fsa_priv->vendor != DIO4483)) {
+		if ((fsa_priv->vendor != DIO4480) && (fsa_priv->vendor != DIO4483)
+                     && (fsa_priv->vendor != BCT4482)) {
 			/* Add for open auto mic DET */
 			if (fsa_priv->vendor == HL5281) {
 				regmap_write(fsa_priv->regmap, FSA4480_FUN_EN, 0x5D);

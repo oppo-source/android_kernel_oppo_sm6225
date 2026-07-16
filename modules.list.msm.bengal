@@ -132,3 +132,5 @@ oplus_power_notifier.ko
 oplus_storage_log.ko
 oplus_uprobe.ko
 oplus_omrg.ko
+horae_flash_led_temp.ko
+oplus_bsp_waker_identify.ko

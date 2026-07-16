@@ -100,11 +100,48 @@ static size_t store_dload_mode(struct kobject *kobj, struct attribute *attr,
 RESET_ATTR(dload_mode, 0644, show_dload_mode, store_dload_mode);
 #endif /* CONFIG_QCOM_MINIDUMP */
 
+static ssize_t show_update_arb(struct kobject *kobj, struct attribute *attr,
+  		       char *buf);
+static size_t store_update_arb(struct kobject *kobj, struct attribute *attr,
+  			const char *buf, size_t count);
+RESET_ATTR(update_arb, 0644, show_update_arb, store_update_arb);
+static ssize_t show_update_arb(struct kobject *kobj, struct attribute *attr,
+  		       char *buf)
+{
+  pr_debug("update_arb: show invoked");
+  return scnprintf(buf, PAGE_SIZE, "0\n");
+}
+static size_t store_update_arb(struct kobject *kobj, struct attribute *attr,
+  			const char *buf, size_t count)
+{
+	bool trigger;
+	int ret;
+
+	ret = kstrtobool(buf, &trigger);
+	if (ret < 0) {
+		pr_err("update_arb: kstrtobool failed rc=%d", ret);
+		return ret;
+	}
+
+	if (!trigger) {
+		pr_info("update_arb: trigger is false, no-op");
+		return count;
+	}
+
+	ret = qcom_scm_update_rollback_version();
+	if (ret < 0) {
+		pr_err("update_arb: SCM call TZ_UPDATE_ROLLBACK_VERSION_ID failed rc=%d", ret);
+		return ret;
+	}
+	return count;
+}
+
 static struct attribute *reset_attrs[] = {
 	&reset_attr_emmc_dload.attr,
 #if IS_ENABLED(CONFIG_QCOM_MINIDUMP)
 	&reset_attr_dload_mode.attr,
 #endif
+        &reset_attr_update_arb.attr,
 	NULL
 };
 

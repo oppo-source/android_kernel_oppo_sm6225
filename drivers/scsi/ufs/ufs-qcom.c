@@ -123,6 +123,10 @@ struct device_attribute ufs_transmission_status_attr;
 /*feature-flashaging806-v001-1-begin*/
 struct unipro_signal_quality_ctrl signalCtrl;
 /*feature-flashaging806-v001-1-end*/
+
+int ufsplus_wb_status = 0;
+int ufsplus_hpb_status = 0;
+
 enum {
 	TSTBUS_UAWM,
 	TSTBUS_UARM,
@@ -4460,6 +4464,30 @@ cell_put:
 	nvmem_cell_put(nvmem_cell);
 }
 
+/*feature-iostack-v001-begin*/
+#define IOSTACK_WORK_DELAY  (10 * HZ)
+static void iostack_monitor_work(struct work_struct *work)
+{
+	struct ufs_qcom_host *host = container_of(to_delayed_work(work),
+							struct ufs_qcom_host,
+							iostack_work);
+	struct ufs_hba *hba = host->hba;
+	unsigned int irqs = 0;
+	unsigned int self_block = hba->host->host_self_blocked;
+
+	irqs = kstat_irqs_usr(hba->irq);
+
+	pr_err("iostack: irqs = %d, self-block = %d\n", irqs, self_block);
+	schedule_delayed_work(&host->iostack_work, IOSTACK_WORK_DELAY);
+}
+
+static void ufs_iostack_init(struct ufs_qcom_host *host)
+{
+	INIT_DELAYED_WORK(&host->iostack_work, iostack_monitor_work);
+	schedule_delayed_work(&host->iostack_work, IOSTACK_WORK_DELAY);
+}
+/*feature-iostack-v001-end*/
+
 /**
  * ufs_qcom_init - bind phy with controller
  * @hba: host controller instance
@@ -4706,6 +4734,7 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 
 	ufs_qcom_populate_available_cpus(hba);
 	ufs_qcom_qos_init(hba);
+	ufs_iostack_init(host);
 	ufs_qcom_parse_irq_affinity(hba);
 	ufs_qcom_ber_mon_init(hba);
 	host->ufs_ipc_log_ctx = ipc_log_context_create(UFS_QCOM_MAX_LOG_SZ,
@@ -5174,6 +5203,7 @@ static void ufs_qcom_event_notify(struct ufs_hba *hba,
 	bool ber_th_exceeded = false;
 	bool evt_valid = true;
 	recordGearErr(&signalCtrl, hba);
+	recordUniproErr(&signalCtrl, reg, evt);
 
 	switch (evt) {
 	case UFS_EVT_PA_ERR:
@@ -5665,6 +5695,10 @@ static struct ufs_dev_fix ufs_qcom_dev_fixups[] = {
 
 static void ufs_qcom_fixup_dev_quirks(struct ufs_hba *hba)
 {
+	/*Disable the hpb function on the device end*/
+	struct ufs_dev_info *dev_info = &hba->dev_info;
+	dev_info->hpb_enabled = false;
+
 	ufshcd_fixup_dev_quirks(hba, ufs_qcom_dev_fixups);
 #if defined(CONFIG_UFSHID_YMTC)
 	if (ufs_qcom_check_spec(hba, 0x0220) &&
@@ -6011,6 +6045,19 @@ static void ufs_qcom_hook_send_command(void *param, struct ufs_hba *hba,
 	if (lrbp && lrbp->cmd && lrbp->cmd->cmnd[0]) {
 		struct request *rq = scsi_cmd_to_rq(lrbp->cmd);
 		int sz = rq ? blk_rq_sectors(rq) : 0;
+
+		/* if cost more than 100ms, print out in dmesg for IO analyze */
+		if ((lrbp->cmd->cmnd[0] == READ_10 || lrbp->cmd->cmnd[0] == WRITE_10 ||
+		     lrbp->cmd->cmnd[0] == READ_16 || lrbp->cmd->cmnd[0] == WRITE_16) &&
+		    ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp) > 100000) {
+			printk_ratelimited(
+				KERN_WARNING "%s cost more than 100ms, it's %dms\n",
+				lrbp->cmd->cmnd[0] == READ_10 ? "READ_10" :
+				lrbp->cmd->cmnd[0] == WRITE_10 ? "WRITE_10" :
+				lrbp->cmd->cmnd[0] == READ_16 ? "READ_16" : "WRITE_16",
+				ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp) / 1000);
+		}
+
 		ufs_qcom_log_str(host, "<,%x,%d,%x,%d\n",
 				lrbp->cmd->cmnd[0],
 				lrbp->task_tag,
@@ -6105,6 +6152,19 @@ static void ufs_qcom_hook_check_int_errors(void *param, struct ufs_hba *hba,
 	}
 }
 
+#ifdef CONFIG_SCSI_UFS_HPB
+static bool is_ufshpb_allowed(struct ufs_hba *hba)
+{
+	return (!(hba->ufshpb_dev.hpb_disabled) && hba->dev_info.hpb_enabled);
+}
+#else
+static bool is_ufshpb_allowed(struct ufs_hba *hba)
+{
+	pr_warn("ufshpb macro definition is not opened\n");
+	return false;
+}
+#endif
+
 //Optimization.Storage.ufs 2023.11.7 add for /proc/devinfo/ufs
 /*feature-devinfo-v001-1-begin*/
 static int create_devinfo_ufs(struct scsi_device *sdev)
@@ -6113,6 +6173,7 @@ static int create_devinfo_ufs(struct scsi_device *sdev)
 	static char vendor[9] = {0};
 	static char model[17] = {0};
 	int ret = 0;
+	struct ufs_hba *hba = NULL;
 
 	pr_info("get ufs device vendor/model/rev\n");
 	WARN_ON(!sdev);
@@ -6131,6 +6192,19 @@ static int create_devinfo_ufs(struct scsi_device *sdev)
 
 	if (ret) {
 		pr_err("%s create ufs fail, ret=%d",__func__,ret);
+	}
+
+	hba = shost_priv(sdev->host);
+	if (hba && ufshcd_is_wb_allowed(hba)) {
+		ufsplus_wb_status = 1;
+	}
+	if (hba && is_ufshpb_allowed(hba)) {
+		ufsplus_hpb_status = 1;
+	}
+	ret = register_device_proc_for_ufsplus("ufsplus_status",
+				&ufsplus_hpb_status, &ufsplus_wb_status);
+	if (ret) {
+		pr_err("%s create, ret=%d", __func__, ret);
 	}
 
 	return ret;

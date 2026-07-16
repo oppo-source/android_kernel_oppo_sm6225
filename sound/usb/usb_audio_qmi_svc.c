@@ -1733,9 +1733,13 @@ response:
 		mutex_lock(&chip->mutex);
 		if (info_idx >= 0) {
 			info = &uadev[pcm_card_num].info[info_idx];
-			uaudio_dev_intf_cleanup(
-					uadev[pcm_card_num].udev,
-					info);
+			if (info) {
+				uaudio_dev_intf_cleanup(
+						uadev[pcm_card_num].udev,
+						info);
+				uaudio_dbg("release resources: intf# %d card# %d\n",
+						info->intf_num, pcm_card_num);
+			}
 		}
 		if (atomic_dec_and_test(&uadev[pcm_card_num].in_use))
 			uaudio_dev_release(&uadev[pcm_card_num]);

@@ -3893,32 +3893,6 @@ static enum typec_cc_status tcpm_pwr_opmode_to_rp(enum typec_pwr_opmode opmode)
 	}
 }
 
-static void tcpm_set_initial_svdm_version(struct tcpm_port *port)
-{
-	if (!port->partner)
-		return;
-
-	switch (port->negotiated_rev) {
-	case PD_REV30:
-		break;
-	/*
-	 * 6.4.4.2.3 Structured VDM Version
-	 * 2.0 states "At this time, there is only one version (1.0) defined.
-	 * This field Shall be set to zero to indicate Version 1.0."
-	 * 3.0 states "This field Shall be set to 01b to indicate Version 2.0."
-	 * To ensure that we follow the Power Delivery revision we are currently
-	 * operating on, downgrade the SVDM version to the highest one supported
-	 * by the Power Delivery revision.
-	 */
-	case PD_REV20:
-		typec_partner_set_svdm_version(port->partner, SVDM_VER_1_0);
-		break;
-	default:
-		typec_partner_set_svdm_version(port->partner, SVDM_VER_1_0);
-		break;
-	}
-}
-
 static void run_state_machine(struct tcpm_port *port)
 {
 	int ret;

@@ -505,7 +505,8 @@ static ssize_t qpnp_vib_store_activate(struct device *dev,
 		return count;
 
 	if ((hrtimer_active(&chip->stop_timer))&&
-		(chip->vib_play_ms == QPNP_VIB_MIN_PLAY_MS))
+		((chip->vib_play_ms == QPNP_VIB_MIN_PLAY_MS)||
+		(chip->vib_play_ms == chip->min_duration_ms)))
 		return count;
 
 	mutex_lock(&chip->lock);

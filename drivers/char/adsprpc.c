@@ -1690,6 +1690,20 @@ static int overlap_ptr_cmp(const void *a, const void *b)
 	return st == 0 ? ed : st;
 }
 
+/**
+ * context_build_overlap - Detect and handle buffer overlaps in RPC args
+ * @ctx: The invoke context containing buffer information
+ *
+ * This function detects overlapping memory regions in the RPC arguments and
+ * adjusts the memory mapping accordingly. It handles ION and non-ION buffers
+ * separately to prevent incorrect overlap detection between different buf types.
+ * For each buffer type:
+ * - If a buffer overlaps with a previous buffer of the same type, it adjusts
+ *   the mapping to avoid the overlap
+ * - If no overlap is detected, it uses the full buffer range
+ *
+ * Return: 0 on success, error code on failure
+ */
 static int context_build_overlap(struct smq_invoke_ctx *ctx)
 {
 	int i, err = 0;
@@ -1697,7 +1711,9 @@ static int context_build_overlap(struct smq_invoke_ctx *ctx)
 	int inbufs = REMOTE_SCALARS_INBUFS(ctx->sc);
 	int outbufs = REMOTE_SCALARS_OUTBUFS(ctx->sc);
 	int nbufs = inbufs + outbufs;
-	struct overlap max;
+	struct overlap max_nonion;
+	struct overlap max_ion;
+	struct overlap *max;
 
 	for (i = 0; i < nbufs; ++i) {
 		ctx->overs[i].start = (uintptr_t)lpra[i].buf.pv;
@@ -1717,21 +1733,29 @@ static int context_build_overlap(struct smq_invoke_ctx *ctx)
 		ctx->overps[i] = &ctx->overs[i];
 	}
 	sort(ctx->overps, nbufs, sizeof(*ctx->overps), overlap_ptr_cmp, NULL);
-	max.start = 0;
-	max.end = 0;
+	max_nonion.start = 0;
+	max_nonion.end = 0;
+	max_ion.start = 0;
+	max_ion.end = 0;
+	max_nonion.raix = -1;
+	max_ion.raix = -1;
 	for (i = 0; i < nbufs; ++i) {
-		if (ctx->overps[i]->start < max.end) {
-			ctx->overps[i]->mstart = max.end;
+		int raix = ctx->overps[i]->raix;
+		/* Separate ION and non-ION buffers; fd <= 0 indicates non-ION */
+		max = (ctx->fds && ctx->fds[raix] > 0) ? &max_ion : &max_nonion;
+		if (ctx->overps[i]->start < max->end) {
+			ctx->overps[i]->mstart = max->end;
 			ctx->overps[i]->mend = ctx->overps[i]->end;
-			ctx->overps[i]->offset = max.end -
+			ctx->overps[i]->offset = max->end -
 				ctx->overps[i]->start;
-			if (ctx->overps[i]->end > max.end) {
-				max.end = ctx->overps[i]->end;
+			if (ctx->overps[i]->end > max->end) {
+				max->end = ctx->overps[i]->end;
+				max->raix = raix;
 			} else {
-				if ((max.raix < inbufs &&
+				if ((max->raix < inbufs &&
 					ctx->overps[i]->raix + 1 > inbufs) ||
 					(ctx->overps[i]->raix < inbufs &&
-					max.raix + 1 > inbufs))
+					max->raix + 1 > inbufs))
 					ctx->overps[i]->do_cmo = 1;
 				ctx->overps[i]->mend = 0;
 				ctx->overps[i]->mstart = 0;
@@ -1740,7 +1764,7 @@ static int context_build_overlap(struct smq_invoke_ctx *ctx)
 			ctx->overps[i]->mend = ctx->overps[i]->end;
 			ctx->overps[i]->mstart = ctx->overps[i]->start;
 			ctx->overps[i]->offset = 0;
-			max = *ctx->overps[i];
+			*max = *ctx->overps[i];
 		}
 	}
 bail:
@@ -3872,7 +3896,7 @@ bail:
 
 static int fastrpc_mmap_remove_pdr(struct fastrpc_file *fl);
 static int fastrpc_channel_open(struct fastrpc_file *fl, uint32_t flags);
-static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl, int locked);
+static int fastrpc_dsp_restart_handler(struct fastrpc_file *fl, int locked, bool dump_req);
 
 /*
  * This function makes a call to create a thread group in the root
@@ -5045,7 +5069,7 @@ bail:
 }
 
 
-static int fastrpc_mmap_dump(struct fastrpc_mmap *map, struct fastrpc_file *fl, int locked)
+static int fastrpc_mmap_dump(struct fastrpc_mmap *map, struct fastrpc_file *fl, int locked, bool dump_req)
 {
 	struct fastrpc_mmap *match = map;
 	int err = 0, ret = 0;
@@ -5100,18 +5124,20 @@ static int fastrpc_mmap_dump(struct fastrpc_mmap *map, struct fastrpc_file *fl, 
 		if (err)
 			return err;
 	}
-	memset(&ramdump_segments_rh, 0, sizeof(ramdump_segments_rh));
-	ramdump_segments_rh.da = match->phys;
-	ramdump_segments_rh.va = (void *)page_address((struct page *)match->va);
-	ramdump_segments_rh.size = match->size;
-	INIT_LIST_HEAD(&head);
-	list_add(&ramdump_segments_rh.node, &head);
-	if (me->dev[RH_CID] && dump_enabled() &&
-		me->channel[RH_CID].hib_state == NORMAL_STATE) {
-		ret = qcom_elf_dump(&head, me->dev[RH_CID], ELF_CLASS);
-		if (ret < 0)
-			pr_err("adsprpc: %s: unable to dump heap (err %d)\n",
-						__func__, ret);
+	if (dump_req) {
+		memset(&ramdump_segments_rh, 0, sizeof(ramdump_segments_rh));
+		ramdump_segments_rh.da = match->phys;
+		ramdump_segments_rh.va = (void *)page_address((struct page *)match->va);
+		ramdump_segments_rh.size = match->size;
+		INIT_LIST_HEAD(&head);
+		list_add(&ramdump_segments_rh.node, &head);
+		if (me->dev[RH_CID] && dump_enabled() &&
+			me->channel[RH_CID].hib_state == NORMAL_STATE) {
+			ret = qcom_elf_dump(&head, me->dev[RH_CID], ELF_CLASS);
+			if (ret < 0)
+				pr_err("adsprpc: %s: unable to dump heap (err %d)\n",
+							__func__, ret);
+		}
 	}
 	if (!match->is_persistent) {
 		if (!locked && fl)
@@ -5123,7 +5149,7 @@ static int fastrpc_mmap_dump(struct fastrpc_mmap *map, struct fastrpc_file *fl, 
 	return 0;
 }
 
-static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl, int locked)
+static int fastrpc_dsp_restart_handler(struct fastrpc_file *fl, int locked, bool dump_req)
 {
 	struct fastrpc_mmap *match = NULL, *map = NULL;
 	struct hlist_node *n = NULL;
@@ -5157,7 +5183,7 @@ static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl, int locked)
 		}
 		spin_unlock_irqrestore(&me->hlock, irq_flags);
 		if (match)
-			err = fastrpc_mmap_dump(match, fl, locked);
+			err = fastrpc_mmap_dump(match, fl, locked, dump_req);
 	} while (match && !err);
 bail:
 	if (err && match) {
@@ -5202,7 +5228,7 @@ static int fastrpc_mmap_remove_pdr(struct fastrpc_file *fl)
 	}
 	if (me->channel[cid].spd[session].pdrcount !=
 		me->channel[cid].spd[session].prevpdrcount) {
-		err = fastrpc_mmap_remove_ssr(fl, 0);
+		err = fastrpc_dsp_restart_handler(fl, 0, false);
 		if (err)
 			ADSPRPC_WARN("failed to unmap remote heap (err %d)\n",
 					err);
@@ -6233,7 +6259,7 @@ static int fastrpc_channel_open(struct fastrpc_file *fl, uint32_t flags)
 			 me->channel[cid].prevssrcount) {
 		mutex_unlock(&me->channel[cid].smd_mutex);
 		mutex_lock(&fl->map_mutex);
-		err = fastrpc_mmap_remove_ssr(fl, 1);
+		err = fastrpc_dsp_restart_handler(fl, 1, true);
 		mutex_unlock(&fl->map_mutex);
 		if (err)
 			ADSPRPC_WARN(
@@ -8419,7 +8445,7 @@ static int fastrpc_hibernation_suspend(struct device *dev)
 					"qcom,msm-fastrpc-compute")) {
 		for (cid = 0; cid < NUM_CHANNELS; cid++)
 			me->channel[cid].hib_state = HIBERNATION_SUSPEND;
-		err = fastrpc_mmap_remove_ssr(NULL, 0);
+		err = fastrpc_dsp_restart_handler(NULL, 0, true);
 		if (err)
 			ADSPRPC_WARN("failed to unmap remote heap (err %d)\n",
 					err);

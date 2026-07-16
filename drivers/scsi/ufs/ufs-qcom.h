@@ -748,6 +748,7 @@ struct ufs_qcom_host {
 	atomic_t num_reqs_threshold;
 	bool cur_freq_vote;
 	struct delayed_work fwork;
+	struct delayed_work iostack_work;
 	bool cpufreq_dis;
 	unsigned int min_cpu_scale_freq;
 	unsigned int max_cpu_scale_freq;

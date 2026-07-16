@@ -164,6 +164,10 @@ $(obj)/kheaders_data.tar.xz: FORCE
 
 clean-files := kheaders_data.tar.xz kheaders.md5
 
+#ifdef OPLUS_FEATURE_WAKER_IDENTIFY
+obj-$(CONFIG_OPLUS_FEATURE_WAKER_IDENTIFY) += oplus_cpu/waker_identify/
+#endif OPLUS_FEATURE_WAKER_IDENTIFY
+
 #ifdef OPLUS_FEATURE_PERFORMANCE_SCHED
 obj-$(CONFIG_OPLUS_FEATURE_PERFORMANCE_SCHED) += oplus_cpu/sched/
 #endif /* OPLUS_FEATURE_PERFORMANCE_SCHED */

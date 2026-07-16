@@ -30,17 +30,10 @@
 #include <soc/oplus/system/oplus_project.h>
 #include <linux/workqueue.h>
 #include <linux/regulator/consumer.h>
-/*
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-#include <mt-plat/mtk_boot.h>
-#else
+#include <soc/oplus/boot/boot_mode.h>
+#ifdef CONFIG_OPLUS_CHARGER_MTK
 #include <mt-plat/mtk_boot_common.h>
 #endif
-*/
-#include <soc/oplus/boot/boot_mode.h>
-/* copy mtk_boot_common.h */
-#define KERNEL_POWER_OFF_CHARGING_BOOT 8
-#define LOW_POWER_OFF_CHARGING_BOOT 9
 
 #include "leds_aw210xx.h"
 //#include "leds_aw210xx_reg.h"
@@ -84,6 +77,19 @@ void reset_led(void);
 // #define BLINK_USE_AW210XX
 
 struct aw210xx *led_default;
+
+static bool oplus_boot_mode_is_power_off_charging(void)
+{
+#ifdef CONFIG_OPLUS_CHARGER_MTK
+	if (get_boot_mode() == KERNEL_POWER_OFF_CHARGING_BOOT) {
+		return true;
+	} else {
+		return false;
+	}
+#else
+	return qpnp_is_power_off_charging();
+#endif
+}
 
 /******************************************************
  *
@@ -1266,8 +1272,7 @@ static void aw210xx_brightness(struct aw210xx *led)
 		return ;
 	}
 
-	if (get_boot_mode() == KERNEL_POWER_OFF_CHARGING_BOOT ||
-		get_boot_mode() == LOW_POWER_OFF_CHARGING_BOOT) {
+	if (oplus_boot_mode_is_power_off_charging()) {
 		AW_LOG("boot_mode is power_off_charging");
 		return;
 	}
@@ -3912,8 +3917,7 @@ static int aw210xx_i2c_probe(struct i2c_client *i2c,
 	struct aw210xx *aw210xx;
 	struct device_node *np = i2c->dev.of_node;
 	int ret, num_leds = 0, i = 0;
-	if (get_boot_mode() == KERNEL_POWER_OFF_CHARGING_BOOT ||
-		get_boot_mode() == LOW_POWER_OFF_CHARGING_BOOT) {
+	if (oplus_boot_mode_is_power_off_charging()) {
 		AW_LOG("boot_mode is power_off_charging skip probe");
 		return 0;
 	}

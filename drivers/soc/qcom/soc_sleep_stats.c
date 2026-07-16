@@ -637,13 +637,12 @@ static ssize_t oplus_rpmh_master_stats_show(struct kobject *kobj,
 	for (i = 0; i < n_subsystems; i++) {
 		of_property_read_string_index(node, "ss-name", i, &name);
 
-
 		for (j = 0; j < ARRAY_SIZE(subsystems); j++) {
 			if (!strcmp(subsystems[j].name, name)) {
 				stat = qcom_smem_get(subsystems[j].pid,
 						subsystems[j].smem_item, NULL);
 				if (IS_ERR(stat))
-					return PTR_ERR(stat);
+					continue;
 
 				length += oplus_msm_rpmh_master_stats_print_data(
 						buf + length, PAGE_SIZE - length,
@@ -657,12 +656,25 @@ static ssize_t oplus_rpmh_master_stats_show(struct kobject *kobj,
 	return length;
 }
 
+static struct kobject *get_module_kobj(struct device *dev)
+{
+	if (!dev)
+		return NULL;
+	return &dev->driver->owner->mkobj.kobj;
+}
+
+static struct kobject *oplus_power_kobj;
+
 static int soc_sleep_stats_create_sysfs(struct platform_device *pdev,
 					struct soc_sleep_stats_data *drv)
 {
 	int ret = 0;
 
-	drv->stat_kobj = kobject_create_and_add("soc_sleep", NULL);
+	oplus_power_kobj = get_module_kobj(&pdev->dev);
+	if (!oplus_power_kobj)
+		return -EINVAL;
+
+	drv->stat_kobj = kobject_create_and_add("soc_sleep", oplus_power_kobj);
 	if (!drv->stat_kobj)
 		return -ENOMEM;
 
@@ -673,7 +685,7 @@ static int soc_sleep_stats_create_sysfs(struct platform_device *pdev,
 
 	ret = sysfs_create_file(drv->stat_kobj, &drv->ka_stat_oplus.attr);
 
-	drv->master_kobj = kobject_create_and_add("rpmh_stats", NULL);
+	drv->master_kobj = kobject_create_and_add("rpmh_stats", oplus_power_kobj);
 	if (!drv->master_kobj)
 		return -ENOMEM;
 

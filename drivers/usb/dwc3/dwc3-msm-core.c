@@ -528,7 +528,7 @@ struct dwc3_msm {
 	struct usb_irq		wakeup_irq[USB_MAX_IRQ];
 	int			core_irq;
 	unsigned int		irq_cnt;
-	struct work_struct	resume_work;
+	struct delayed_work	resume_work;
 	struct work_struct	restart_usb_work;
 	bool			in_restart;
 	struct workqueue_struct *dwc3_wq;
@@ -2991,7 +2991,7 @@ static void dwc3_restart_usb_work(struct work_struct *w)
 
 	dbg_event(0xFF, "RestartUSB", 0);
 	/* Reset active USB connection */
-	dwc3_resume_work(&mdwc->resume_work);
+	dwc3_resume_work(&mdwc->resume_work.work);
 
 	/* Make sure disconnect is processed before sending connect */
 	while (--timeout && !pm_runtime_suspended(mdwc->dev))
@@ -3008,7 +3008,7 @@ static void dwc3_restart_usb_work(struct work_struct *w)
 	mdwc->in_restart = false;
 	/* Force reconnect only if cable is still connected */
 	if (mdwc->vbus_active)
-		dwc3_resume_work(&mdwc->resume_work);
+		dwc3_resume_work(&mdwc->resume_work.work);
 
 	mdwc->err_evt_seen = false;
 	flush_work(&mdwc->sm_work);
@@ -3572,6 +3572,12 @@ static int dwc3_msm_prepare_suspend(struct dwc3_msm *mdwc, bool ignore_p3_state)
 	/* Clear L2 event bit */
 	dwc3_msm_write_reg(mdwc->base, PWR_EVNT_IRQ_STAT_REG,
 		PWR_EVNT_LPM_IN_L2_MASK);
+
+	/* Fix not recognize otg device just connect/disconnect from A port */
+	if (mdwc->in_host_mode) {
+		schedule_delayed_work(&mdwc->resume_work, msecs_to_jiffies(500));
+		dev_err(mdwc->dev, "DEBUG: schedule resume work!\n");
+	}
 
 	return 0;
 }
@@ -4377,7 +4383,7 @@ static void dwc3_ext_event_notify(struct dwc3_msm *mdwc)
 
 static void dwc3_resume_work(struct work_struct *w)
 {
-	struct dwc3_msm *mdwc = container_of(w, struct dwc3_msm, resume_work);
+	struct dwc3_msm *mdwc = container_of(w, struct dwc3_msm, resume_work.work);
 	struct dwc3 *dwc = NULL;
 	union extcon_property_value val;
 	unsigned int extcon_id;
@@ -4547,7 +4553,7 @@ static irqreturn_t msm_dwc3_pwr_irq_thread(int irq, void *_mdwc)
 	struct dwc3_msm *mdwc = _mdwc;
 
 	if (atomic_read(&mdwc->in_lpm))
-		dwc3_resume_work(&mdwc->resume_work);
+		dwc3_resume_work(&mdwc->resume_work.work);
 	else
 		dwc3_pwr_event_handler(mdwc);
 
@@ -4720,7 +4726,7 @@ static int dwc3_msm_id_notifier(struct notifier_block *nb,
 
 	mdwc->id_state = id;
 	dbg_event(0xFF, "id_state", mdwc->id_state);
-	queue_work(mdwc->dwc3_wq, &mdwc->resume_work);
+	queue_delayed_work(mdwc->dwc3_wq, &mdwc->resume_work, 0);
 
 	return NOTIFY_DONE;
 }
@@ -4807,7 +4813,7 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 
 	mdwc->ext_idx = enb->idx;
 	if (mdwc->dr_mode == USB_DR_MODE_OTG && !mdwc->in_restart)
-		queue_work(mdwc->dwc3_wq, &mdwc->resume_work);
+		queue_delayed_work(mdwc->dwc3_wq, &mdwc->resume_work, 0);
 
 	return NOTIFY_DONE;
 }
@@ -5064,7 +5070,28 @@ static int dwc3_msm_set_role(struct dwc3_msm *mdwc, enum usb_role role)
 static int dwc3_msm_usb_role_switch_set_role(struct usb_role_switch *sw, enum usb_role role)
 {
 	struct dwc3_msm *mdwc = usb_role_switch_get_drvdata(sw);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	enum usb_role cur_role = dwc3_msm_get_role(mdwc);
+	ktime_t start;
+	ktime_t end;
+	unsigned int timeout = 100;
+	s64 ms;
 
+	if(((cur_role == USB_ROLE_NONE) && (role == USB_ROLE_HOST)) ||
+	   ((cur_role == USB_ROLE_NONE) && (role == USB_ROLE_DEVICE))) {
+		start = ktime_get();
+	}
+	if(((cur_role == USB_ROLE_DEVICE) && (role == USB_ROLE_HOST)) ||
+	  ((cur_role == USB_ROLE_HOST) && (role == USB_ROLE_DEVICE))) {
+		end = ktime_get();
+		ms = ktime_to_ms(ktime_sub(end, start));
+		if (ms <= (s64)timeout) {
+			printk(KERN_ERR"cur_role:%d new_role:%d, ignore the dr swap within %dms\n",
+			    cur_role, role, timeout);
+			return 0;
+		}
+	}
+#endif
 	return dwc3_msm_set_role(mdwc, role);
 }
 
@@ -5442,7 +5469,7 @@ static int dwc3_start_stop_host(struct dwc3_msm *mdwc, bool start)
 		 */
 		pm_runtime_get(&mdwc->dwc3->dev);
 
-		flush_work(&mdwc->resume_work);
+		flush_delayed_work(&mdwc->resume_work);
 		flush_workqueue(mdwc->sm_usb_wq);
 
 		pm_runtime_put(&mdwc->dwc3->dev);
@@ -5479,7 +5506,7 @@ static int dwc3_start_stop_device(struct dwc3_msm *mdwc, bool start)
 		 */
 		pm_runtime_get(&mdwc->dwc3->dev);
 
-		flush_work(&mdwc->resume_work);
+		flush_delayed_work(&mdwc->resume_work);
 		flush_workqueue(mdwc->sm_usb_wq);
 
 		pm_runtime_put(&mdwc->dwc3->dev);
@@ -5527,7 +5554,7 @@ int dwc3_msm_set_dp_mode(struct device *dev, bool dp_connected, int lanes)
 	}
 
 	/* flush any pending work */
-	flush_work(&mdwc->resume_work);
+	flush_delayed_work(&mdwc->resume_work);
 	flush_workqueue(mdwc->sm_usb_wq);
 
 	dbg_log_string("DP: cur_state:%d new_state:%d lanes:%d\n",
@@ -5579,7 +5606,7 @@ int dwc3_msm_set_dp_mode(struct device *dev, bool dp_connected, int lanes)
 	}
 
 	/* flush any pending work */
-	flush_work(&mdwc->resume_work);
+	flush_delayed_work(&mdwc->resume_work);
 	flush_workqueue(mdwc->sm_usb_wq);
 
 	mutex_lock(&mdwc->role_switch_mutex);
@@ -5811,12 +5838,14 @@ static int dwc3_msm_parse_core_params(struct dwc3_msm *mdwc, struct device_node 
 	if (!ret)
 		ret = match_string(speed_names, ARRAY_SIZE(speed_names), prop_string);
 	mdwc->max_hw_supp_speed = (ret < 0) ? USB_SPEED_UNKNOWN : ret;
+	dev_err(mdwc->dev, "maximum-speed = %d\n", mdwc->max_hw_supp_speed);
 	dwc3_msm_set_max_speed(mdwc, mdwc->max_hw_supp_speed);
 
 	ret = of_property_read_string(dwc3_node, "dr_mode", &prop_string);
 	if (!ret)
 		ret = match_string(usb_dr_modes, ARRAY_SIZE(usb_dr_modes), prop_string);
 	mdwc->dr_mode = (ret < 0) ? USB_DR_MODE_UNKNOWN : ret;
+	dev_err(mdwc->dev, "dr_mode = %d\n", mdwc->dr_mode);
 
 	mdwc->core_irq = of_irq_get(dwc3_node, 0);
 
@@ -6056,7 +6085,7 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	g_mdwc = mdwc;
 #endif
 	INIT_LIST_HEAD(&mdwc->req_complete_list);
-	INIT_WORK(&mdwc->resume_work, dwc3_resume_work);
+	INIT_DELAYED_WORK(&mdwc->resume_work, dwc3_resume_work);
 	INIT_WORK(&mdwc->restart_usb_work, dwc3_restart_usb_work);
 	INIT_WORK(&mdwc->sm_work, dwc3_otg_sm_work);
 	INIT_DELAYED_WORK(&mdwc->perf_vote_work, msm_dwc3_perf_vote_work);
@@ -7396,7 +7425,7 @@ static int dwc3_msm_pm_resume(struct device *dev)
 
 out:
 	/* kick in otg state machine */
-	queue_work(mdwc->dwc3_wq, &mdwc->resume_work);
+	queue_delayed_work(mdwc->dwc3_wq, &mdwc->resume_work, 0);
 
 	return 0;
 }
@@ -7474,7 +7503,7 @@ static void dwc3_core_complete(struct device *dev)
 
 	if (!mdwc->in_host_mode) {
 		dbg_event(0xFF, "Queue ResWrk", 0);
-		queue_work(mdwc->dwc3_wq, &mdwc->resume_work);
+		queue_delayed_work(mdwc->dwc3_wq, &mdwc->resume_work, 0);
 	}
 }
 #endif

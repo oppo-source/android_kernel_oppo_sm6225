@@ -4,6 +4,7 @@
 #include <scsi/scsi_ioctl.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_device.h>
+#include <scsi/scsi_common.h>
 #include <scsi/sg.h>
 #include "scsi_priv.h"
 
@@ -16,6 +17,9 @@ static int scsi_bsg_sg_io_fn(struct request_queue *q, struct sg_io_v4 *hdr,
 	struct request *rq;
 	struct bio *bio;
 	int ret;
+	int len;
+	int retry_cnt = 0;
+	struct scsi_sense_hdr sshdr;
 
 	if (hdr->protocol != BSG_PROTOCOL_SCSI  ||
 	    hdr->subprotocol != BSG_SUB_PROTOCOL_SCSI_CMD)
@@ -60,6 +64,8 @@ static int scsi_bsg_sg_io_fn(struct request_queue *q, struct sg_io_v4 *hdr,
 		goto out_free_cmd;
 
 	bio = rq->bio;
+
+need_retry:
 	blk_execute_rq(NULL, rq, !(hdr->flags & BSG_FLAG_Q_AT_TAIL));
 
 	/*
@@ -76,7 +82,20 @@ static int scsi_bsg_sg_io_fn(struct request_queue *q, struct sg_io_v4 *hdr,
 	hdr->response_len = 0;
 
 	if (sreq->sense_len && hdr->response) {
-		int len = min_t(unsigned int, hdr->max_response_len,
+		/*
+		 * When a user enters their password, the ufs on the SM6115/SM6225 platform returns
+		 * an unit attention error with a low probability, causing unlocking failure. To fix this issue,
+		 * a retry is performed on a specific command of 0x5b.
+		 */
+		if (sreq->cmd[0] == SECURITY_PROTOCOL_OUT && retry_cnt < 3) {
+			if (scsi_normalize_sense(sreq->sense, SCSI_SENSE_BUFFERSIZE, &sshdr) &&
+				(sshdr.sense_key == 0x6 && sshdr.asc == 0x29 && sshdr.ascq == 0x00)) {
+				retry_cnt++;
+				goto need_retry;
+			}
+		}
+
+		len = min_t(unsigned int, hdr->max_response_len,
 					sreq->sense_len);
 
 		if (copy_to_user(uptr64(hdr->response), sreq->sense, len))

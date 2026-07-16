@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+
 /* Copyright (c) 2010,2015,2019,2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2015 Linaro Ltd.
  * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
@@ -13,6 +14,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/module.h>
 #include <linux/types.h>
+#include <linux/string.h>
 #include <linux/qcom_scm.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
@@ -35,6 +37,8 @@
 static bool download_mode = IS_ENABLED(CONFIG_QCOM_SCM_DOWNLOAD_MODE_DEFAULT);
 module_param(download_mode, bool, 0);
 
+static DEFINE_MUTEX(update_arb_lock);
+static bool update_arb_done = false;
 static unsigned int pas_shutdown_retry_interval = 100;
 module_param(pas_shutdown_retry_interval, uint, 0644);
 static unsigned int pas_shutdown_retry_max = 50;
@@ -568,6 +572,49 @@ int qcom_scm_get_download_mode(unsigned int *mode, phys_addr_t tcsr_boot_misc)
 	return ret;
 }
 EXPORT_SYMBOL(qcom_scm_get_download_mode);
+
+int qcom_scm_update_rollback_version(void)
+{
+	int ret;
+	struct qcom_scm_res res;
+	struct qcom_scm_desc desc = {
+		.svc = QCOM_SCM_SVC_BOOT,
+		.cmd = 0x1E,
+		.owner = ARM_SMCCC_OWNER_SIP,
+		.arginfo = QCOM_SCM_ARGS(0),
+	};
+
+	if (!__scm) {
+		pr_err("qcom_scm_update_rollback_version: SCM not initialized\n");
+		return -ENODEV;
+	}
+	memset(&res, 0, sizeof(res));
+
+	mutex_lock(&update_arb_lock);
+	if (update_arb_done == true) {
+		mutex_unlock(&update_arb_lock);
+		pr_info("qcom update arb: request already succeed\n");
+		return 0;
+	}
+	ret = qcom_scm_call(__scm->dev, &desc, &res);
+	if (ret) {
+		pr_err("qcom_scm_update_rollback_version: qcom_scm_call failed ret=%d\n", ret);
+		mutex_unlock(&update_arb_lock);
+		return ret;
+	}
+	if (res.result[0]) {
+		pr_err("qcom_scm_update_rollback_version: TZ returned status=%llu\n", res.result[0]);
+		mutex_unlock(&update_arb_lock);
+		return -ENODEV;
+	}
+
+	update_arb_done = true;
+	mutex_unlock(&update_arb_lock);
+
+	pr_info("qcom arb_update: success\n");
+	return 0;
+}
+EXPORT_SYMBOL(qcom_scm_update_rollback_version);
 
 int qcom_scm_config_cpu_errata(void)
 {

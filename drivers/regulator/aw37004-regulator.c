@@ -1,3 +1,7 @@
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/sched.h>
+
 #include "aw37004-regulator.h"
 
 #define AW37004_REG_ID			0x00
@@ -497,7 +501,9 @@ static int aw37004_regulator_probe(struct i2c_client *client,
 	unsigned int val = 0;
 	struct aw37004_chip_data * chip_data = NULL;
 	struct regmap *regmap;
+	int wait_count = 0;
 
+	LOGI("++ pid= %d",current->pid);
 	LOGI("++");
 	regmap = devm_regmap_init_i2c(client, &aw37004_regmap_config);
 	if (IS_ERR(regmap)) {
@@ -553,6 +559,22 @@ static int aw37004_regulator_probe(struct i2c_client *client,
 	if (rc < 0) {
 		LOGE("error creating sysfs attr files\n");
 	}
+	if((rc >= 0) && client->dev.fwnode) {
+		LOGI("aw37004 probe: fwnode is not null");
+		while(!client->dev.fwnode->dev) {
+			wait_count++;
+			if (wait_count > 10) {
+				LOGE("aw37004 probe fail: because fwnode->dev is null,camera can not work!!!!");
+				break;
+			}
+			LOGI("aw37004 probe: waiting for fwnode->dev create");
+			msleep(100);
+		}
+		if (wait_count > 0) {
+			msleep(10);
+			wait_count = 0;
+		}
+	}
 
 	LOGI("--- rc = %d",rc);
 	return rc;
@@ -595,7 +617,7 @@ static struct i2c_driver aw37004_driver = {
 
 static int __init aw37004_i2c_init(void)
 {
-	LOGI("aw37004 driver version %s\n", AW37004_DRIVER_VERSION);
+	LOGI("aw37004 driver version %s,pid=%d\n", AW37004_DRIVER_VERSION,current->pid);
 	return i2c_add_driver(&aw37004_driver);
 }
 subsys_initcall(aw37004_i2c_init);

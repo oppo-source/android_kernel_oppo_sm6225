@@ -38,6 +38,7 @@ bool is_nfc_support()
 {
 	return support_nfc;
 }
+EXPORT_SYMBOL(is_nfc_support);
 
 bool is_support_chip(chip_type chip)
 {
@@ -442,6 +443,8 @@ static int mixed_nfc_probe(struct platform_device *pdev)
 		err = get_gpio_value_three(&pdev->dev, &gpio_value);
 		break;
 	default:
+		err = -ENOENT;
+		gpio_value = -1;
 		pr_err("Unexpected id_count value: %u\n", id_count);
 		break;
 	}

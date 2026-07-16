@@ -775,6 +775,9 @@ int qrtr_ns_init(void)
 		goto err_sock;
 	}
 
+	/* Camera Team, BugID: 9846848, Set the task priority to FIFO low */
+	sched_set_fifo_low(qrtr_ns.task);
+
 	qrtr_ns.sock->sk->sk_data_ready = qrtr_ns_data_ready;
 
 	sq.sq_port = QRTR_PORT_CTRL;

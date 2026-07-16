@@ -917,10 +917,10 @@ static noinline void __sched __mutex_unlock_slowpath(struct mutex *lock, unsigne
 	if (owner & MUTEX_FLAG_HANDOFF)
 		__mutex_handoff(lock, next);
 
-	trace_android_vh_mutex_unlock_slowpath(lock);
 	raw_spin_unlock(&lock->wait_lock);
 
 	wake_up_q(&wake_q);
+	trace_android_vh_mutex_unlock_slowpath(lock);
 }
 
 #ifndef CONFIG_DEBUG_LOCK_ALLOC

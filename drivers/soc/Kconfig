@@ -86,5 +86,9 @@ source "drivers/soc/oplus/midas/Kconfig"
 #endif /*OPLUS_FEATURE_MIDAS*/
 endmenu
 
+#ifdef OPLUS_FEATURE_WAKER_IDENTIFY
+source "kernel/oplus_cpu/waker_identify/Kconfig"
+#endif /* OPLUS_FEATURE_WAKER_IDENTIFY */
+
 source "drivers/soc/oplus/storage/Kconfig"
 

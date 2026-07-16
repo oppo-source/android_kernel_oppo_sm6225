@@ -65,6 +65,9 @@ static void ioc_destroy_icq(struct io_cq *icq)
 
 	lockdep_assert_held(&ioc->lock);
 
+	if (icq->flags & ICQ_DESTROYED)
+            return;
+
 	radix_tree_delete(&ioc->icq_tree, icq->q->id);
 	hlist_del_init(&icq->ioc_node);
 	list_del_init(&icq->q_node);
@@ -115,12 +118,7 @@ static void ioc_release_fn(struct work_struct *work)
 			spin_lock(&q->queue_lock);
 			spin_lock(&ioc->lock);
 
-			/*
-			 * The icq may have been destroyed when the ioc lock
-			 * was released.
-			 */
-			if (!(icq->flags & ICQ_DESTROYED))
-				ioc_destroy_icq(icq);
+			ioc_destroy_icq(icq);
 
 			spin_unlock(&q->queue_lock);
 			rcu_read_unlock();
@@ -213,21 +211,15 @@ static void __ioc_clear_queue(struct list_head *icq_list)
 {
 	unsigned long flags;
 
-	rcu_read_lock();
 	while (!list_empty(icq_list)) {
 		struct io_cq *icq = list_entry(icq_list->next,
 						struct io_cq, q_node);
 		struct io_context *ioc = icq->ioc;
 
 		spin_lock_irqsave(&ioc->lock, flags);
-		if (icq->flags & ICQ_DESTROYED) {
-			spin_unlock_irqrestore(&ioc->lock, flags);
-			continue;
-		}
 		ioc_destroy_icq(icq);
 		spin_unlock_irqrestore(&ioc->lock, flags);
 	}
-	rcu_read_unlock();
 }
 
 /**
@@ -242,9 +234,9 @@ void ioc_clear_queue(struct request_queue *q)
 
 	spin_lock_irq(&q->queue_lock);
 	list_splice_init(&q->icq_list, &icq_list);
-	spin_unlock_irq(&q->queue_lock);
 
 	__ioc_clear_queue(&icq_list);
+        spin_unlock_irq(&q->queue_lock);
 }
 
 int create_task_io_context(struct task_struct *task, gfp_t gfp_flags, int node)
