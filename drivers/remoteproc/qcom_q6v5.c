@@ -321,8 +321,18 @@ static irqreturn_t q6v5_wdog_interrupt(int irq, void *data)
 	#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
 	if (strstr(q6v5->rproc->name, REMOTEPROC_ADSP)) {
 		if (!IS_ERR(msg) && len > 0 && msg[0]) {
-			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
-				MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@%s$$detailData@@audio$$module@@adsp", msg);
+			if (strstr(msg, "err_inject_crash")) {
+				//Via Diag trigger adsp crash reported to the 10050 event
+				mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_DAEMON, \
+					MM_FB_KEY_RATELIMIT_5MIN, \
+					"FieldData@@%s$$detailData@@audio$$module@@adsp", \
+					msg);
+			} else {
+				mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
+					MM_FB_KEY_RATELIMIT_5MIN, \
+					"FieldData@@%s$$detailData@@audio$$module@@adsp", \
+					msg);
+			}
 		} else {
 			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
 				MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@watchdog without message$$detailData@@audio$$module@@adsp");
@@ -405,8 +415,18 @@ static irqreturn_t q6v5_fatal_interrupt(int irq, void *data)
 	#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
 	if (strstr(q6v5->rproc->name, REMOTEPROC_ADSP)) {
 		if (!IS_ERR(msg) && len > 0 && msg[0]) {
-			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
-				MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@%s$$detailData@@audio$$module@@adsp", msg);
+			if (strstr(msg, "err_inject_crash")) {
+				//Via Diag trigger adsp crash reported to the 10050 event
+				mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_DAEMON, \
+					MM_FB_KEY_RATELIMIT_5MIN, \
+					"FieldData@@%s$$detailData@@audio$$module@@adsp", \
+					msg);
+			} else {
+				mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
+					MM_FB_KEY_RATELIMIT_5MIN, \
+					"FieldData@@%s$$detailData@@audio$$module@@adsp", \
+					msg);
+			}
 		} else {
 			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
 				MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@fatal error without message$$detailData@@audio$$module@@adsp");
